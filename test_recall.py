@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-import claude_search as recall
+import recall
 
 
 class TuiPresentationTests(unittest.TestCase):

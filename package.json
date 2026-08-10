@@ -11,7 +11,7 @@
   ],
   "license": "MIT",
   "files": [
-    "claude_search.py",
+    "recall.py",
     "extensions/recall/index.ts",
     "README.md"
   ],

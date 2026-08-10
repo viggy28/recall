@@ -19,7 +19,7 @@ import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const BACKEND = join(PACKAGE_ROOT, "claude_search.py");
+const BACKEND = join(PACKAGE_ROOT, "recall.py");
 const CONTEXTS_DIR = join(homedir(), ".recall", "contexts");
 const CONTEXT_NAME = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const MAX_GENERATION_CHARS = 120_000;
