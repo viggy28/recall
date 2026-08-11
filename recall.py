@@ -31,6 +31,7 @@ import sys
 import tempfile
 import textwrap
 import time
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -2099,6 +2100,39 @@ def _tui_mode_label(mode: str) -> str:
             "semantic": "meaning"}.get(mode, mode)
 
 
+def _tui_cell_width(text: str) -> int:
+    """Conservative terminal-cell width for curses pane clipping."""
+    width = 0
+    for char in text:
+        if unicodedata.combining(char) or unicodedata.category(char) in {"Cf", "Me"}:
+            continue
+        width += 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1
+    return width
+
+
+def _tui_clip_cells(text: str, width: int) -> str:
+    """Clip plain text without splitting a wide terminal character."""
+    if width <= 0:
+        return ""
+    out = []
+    used = 0
+    for char in text:
+        char_width = _tui_cell_width(char)
+        if char_width and used + char_width > width:
+            break
+        out.append(char)
+        used += char_width
+    return "".join(out)
+
+
+def _tui_split_widths(width: int) -> tuple[int, int, int]:
+    """Return list width, detail x, and detail width without using the last column."""
+    list_width = min(58, width // 2)
+    detail_x = list_width + 2
+    detail_width = max(1, width - detail_x - 1)
+    return list_width, detail_x, detail_width
+
+
 def _tui_rows_per_result(home: bool) -> int:
     """Search rows include the matched excerpt; recent rows do not."""
     return 2 if home else 3
@@ -2151,11 +2185,15 @@ def tui(conn, args):
                 attr = base
                 i += len(HL[1])
                 continue
+            char = s[i]
+            char_width = _tui_cell_width(char)
+            if char_width and vis + char_width > maxw:
+                break
             try:
-                scr.addnstr(y, x + vis, s[i], 1, attr)
+                scr.addnstr(y, x + vis, char, 1, attr)
             except curses.error:
                 pass
-            vis += 1
+            vis += char_width
             i += 1
 
     def _emit_segs(scr, y, x, maxw, segs):
@@ -2164,12 +2202,12 @@ def tui(conn, args):
         for text, attr in segs:
             if vis >= maxw or not text:
                 continue
-            chunk = text[: maxw - vis]
+            chunk = _tui_clip_cells(text, maxw - vis)
             try:
-                scr.addnstr(y, x + vis, chunk, maxw - vis, attr)
+                scr.addnstr(y, x + vis, chunk, len(chunk), attr)
             except curses.error:
                 pass
-            vis += len(chunk)
+            vis += _tui_cell_width(chunk)
 
     def draw_detail(scr, e, x, y0, w, y_max, home, query, mode, dim, bold, hl):
         """Recognition card for the selected session in the right-side pane."""
@@ -2197,7 +2235,7 @@ def tui(conn, args):
             rows.append(("T", f'Best match for "{query.strip()}"', dim))
             passage = e.get("detail_snip") or e["snip"]
             for i, ln in enumerate(_preview_lines(passage, query, mode, max(1, w - 2), 4)):
-                rows.append(("H", ("〉 " if i == 0 else "  ") + ln, None))
+                rows.append(("H", ("> " if i == 0 else "  ") + ln, None))
             rows.append(("T", "", dim))
         span = _fmt_span((d["last_ep"] or 0) - (d["first_ep"] or 0))
         rows.append(("T", f"Started  {_fmt_ts(d['first_ep'])}  ·  spans {span}", 0))
@@ -2206,12 +2244,12 @@ def tui(conn, args):
             rows.append(("T", "", dim))
             rows.append(("T", "First prompt", dim))
             for i, ln in enumerate(_bounded_lines(d["first_prompt"], max(1, w - 2), 3)):
-                rows.append(("T", ("〉 " if i == 0 else "  ") + ln, 0))
+                rows.append(("T", ("> " if i == 0 else "  ") + ln, 0))
         if home and d["latest"]:
             rows.append(("T", "", dim))
             rows.append(("T", "Latest", dim))
             for i, ln in enumerate(_bounded_lines(d["latest"], max(1, w - 2), 4)):
-                rows.append(("T", ("〉 " if i == 0 else "  ") + ln, 0))
+                rows.append(("T", ("> " if i == 0 else "  ") + ln, 0))
         y = y0
         for kind, text, attr in rows:
             if y >= y_max:
@@ -2219,8 +2257,9 @@ def tui(conn, args):
             if kind == "H":
                 _emit_hl(scr, y, x, w, text, dim, hl)
             else:
+                clipped = _tui_clip_cells(text, w)
                 try:
-                    scr.addnstr(y, x, text, w, attr)
+                    scr.addnstr(y, x, clipped, len(clipped), attr)
                 except curses.error:
                     pass
             y += 1
@@ -2247,9 +2286,7 @@ def tui(conn, args):
         # narrow terminal the list spans the full width (no pane).
         side = bool(results) and w >= 90
         if side:
-            lw = min(58, w // 2)
-            dx = lw + 2
-            dw = w - dx
+            lw, dx, dw = _tui_split_widths(w)
             for r in range(2, h - 1):
                 scr.addnstr(r, lw, "│", 1, dim)
         else:
@@ -2277,7 +2314,7 @@ def tui(conn, args):
             # so query highlights form a visible scanning anchor.
             meta_row = row + 1
             if not home:
-                _emit_hl(scr, row + 1, 0, lw - 1, "    〉 " + e["snip"], dim, hl)
+                _emit_hl(scr, row + 1, 0, lw - 1, "    > " + e["snip"], dim, hl)
                 meta_row += 1
             # colored meta segments — harness (pi vs claude), date, and dir each
             # get a distinct hue; id/separators/metric stay dim. Colors fall back
