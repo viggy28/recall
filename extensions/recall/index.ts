@@ -14,13 +14,16 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
-import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
+import { Container, Key, matchesKey, type SelectItem, SelectList, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const BACKEND = join(PACKAGE_ROOT, "recall.py");
-const PACKAGE_VENV_PYTHON = join(PACKAGE_ROOT, ".venv", "bin", "python");
+const PACKAGE_VENV_PYTHONS = [
+  join(PACKAGE_ROOT, ".venv", "bin", "python"),
+  join(PACKAGE_ROOT, ".venv", "bin", "python3"),
+];
 const CONTEXTS_DIR = join(homedir(), ".recall", "contexts");
 const CONTEXT_NAME = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const MAX_GENERATION_CHARS = 120_000;
@@ -49,21 +52,33 @@ function cleanLine(value: string | null | undefined, max = 110): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
-async function pythonBinary(): Promise<string> {
-  const configured = process.env.RECALL_PYTHON?.trim();
-  if (configured) return configured;
-  try {
-    await stat(PACKAGE_VENV_PYTHON);
-    return PACKAGE_VENV_PYTHON;
-  } catch {
-    return "python3";
+async function firstExisting(paths: string[]): Promise<string | null> {
+  for (const path of paths) {
+    try {
+      await stat(path);
+      return path;
+    } catch {
+      // Try the next candidate.
+    }
   }
+  return null;
 }
 
-async function runBackend(pi: ExtensionAPI, args: string[], signal?: AbortSignal) {
-  const result = await pi.exec(await pythonBinary(), [BACKEND, ...args], { signal });
-  if (result.code !== 0) {
-    throw new Error((result.stderr || result.stdout || `recall exited ${result.code}`).trim());
+async function pythonBinary(cwd?: string): Promise<string> {
+  const configured = process.env.RECALL_PYTHON?.trim();
+  if (configured) return configured;
+  const candidates = [
+    ...PACKAGE_VENV_PYTHONS,
+    ...(cwd ? [join(cwd, ".venv", "bin", "python"), join(cwd, ".venv", "bin", "python3")] : []),
+  ];
+  return await firstExisting(candidates) ?? "python3";
+}
+
+async function runBackend(pi: ExtensionAPI, args: string[], signal?: AbortSignal, cwd?: string) {
+  const result = await pi.exec(await pythonBinary(cwd), [BACKEND, ...args], { signal });
+  const stderr = result.stderr.trim();
+  if (result.code !== 0 || stderr.includes("semantic mode needs fastembed")) {
+    throw new Error((stderr || result.stdout || `recall exited ${result.code}`).trim());
   }
   return result.stdout;
 }
@@ -75,17 +90,18 @@ async function searchBackend(
   source?: "claude" | "pi" | "codex",
   limit = 20,
   signal?: AbortSignal,
+  cwd?: string,
 ): Promise<RecallResult[]> {
   const args = ["search", query, "--json", "--limit", String(limit)];
   if (mode === "regex") args.push("--regex");
   if (mode === "semantic") args.push("--semantic");
   if (source) args.push("--source", source);
-  const output = await runBackend(pi, args, signal);
+  const output = await runBackend(pi, args, signal, cwd);
   return JSON.parse(output) as RecallResult[];
 }
 
-async function recentBackend(pi: ExtensionAPI, limit = 50): Promise<RecallResult[]> {
-  return JSON.parse(await runBackend(pi, ["recent", "--json", "--limit", String(limit)]));
+async function recentBackend(pi: ExtensionAPI, limit = 50, cwd?: string): Promise<RecallResult[]> {
+  return JSON.parse(await runBackend(pi, ["recent", "--json", "--limit", String(limit)], undefined, cwd));
 }
 
 async function choose<T>(
@@ -140,6 +156,127 @@ function resultRows(results: RecallResult[]) {
       description: [when, project, match].filter(Boolean).join(" · "),
     };
   });
+}
+
+function sourceLabel(result: RecallResult): string {
+  return result.source === "claude-code" ? "claude" : result.source;
+}
+
+function abbreviateHome(path: string | null | undefined): string {
+  if (!path) return "unknown project";
+  const home = homedir();
+  return path === home ? "~" : path.startsWith(`${home}/`) ? `~/${path.slice(home.length + 1)}` : path;
+}
+
+function resultMetric(result: RecallResult): string {
+  if (result.similarity !== undefined && result.similarity !== null) return `${result.similarity.toFixed(2)} sim`;
+  if (result.hits !== undefined) return `${result.hits} hit${result.hits === 1 ? "" : "s"}`;
+  return "";
+}
+
+function highlightRecallMarkers(text: string, theme: any): string {
+  return text
+    .replace(/»([^«]+)«/g, (_match, value) => theme.fg("accent", value))
+    .replace(/[»«]/g, "");
+}
+
+function padToWidth(line: string, width: number): string {
+  const clipped = truncateToWidth(line, width, "");
+  return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
+}
+
+function combinePanes(left: string, right: string, leftWidth: number, theme: any): string {
+  return `${padToWidth(left, leftWidth)} ${theme.fg("dim", "│")} ${right}`;
+}
+
+async function chooseRecallResult(
+  ctx: ExtensionContext,
+  title: string,
+  results: RecallResult[],
+): Promise<RecallResult | null> {
+  if (ctx.mode !== "tui" || results.length === 0) return null;
+  const selected = await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
+    let sel = 0;
+    let top = 0;
+    const visibleCount = Math.min(10, results.length);
+
+    const clamp = () => {
+      sel = Math.max(0, Math.min(sel, results.length - 1));
+      if (sel < top) top = sel;
+      if (sel >= top + visibleCount) top = sel - visibleCount + 1;
+      top = Math.max(0, Math.min(top, Math.max(0, results.length - visibleCount)));
+    };
+
+    const detailLines = (result: RecallResult, width: number): string[] => {
+      const metric = resultMetric(result);
+      const lines: string[] = [];
+      lines.push(...wrapTextWithAnsi(theme.fg("text", result.title || result.session_id), width).slice(0, 2));
+      lines.push(theme.fg("dim", `${result.session_id} · ${sourceLabel(result)}${metric ? ` · ${metric}` : ""}`));
+      lines.push(theme.fg("dim", abbreviateHome(result.project)));
+      if (result.ts) lines.push(theme.fg("dim", result.ts.slice(0, 10)));
+      lines.push("");
+      lines.push(theme.fg("dim", "Best match"));
+      const snippet = highlightRecallMarkers(cleanLine(result.snippet, 1_000), theme);
+      for (const [index, line] of wrapTextWithAnsi(snippet, Math.max(1, width - 2)).slice(0, 6).entries()) {
+        lines.push(theme.fg("dim", index === 0 ? "〉 " : "  ") + line);
+      }
+      return lines;
+    };
+
+    const render = (width: number): string[] => {
+      clamp();
+      const lines: string[] = [];
+      const headerRight = `[${sel + 1}/${results.length}]`;
+      lines.push(theme.fg("accent", theme.bold(title)) + theme.fg("dim", ` ${headerRight}`));
+
+      const sideBySide = width >= 90;
+      if (sideBySide) {
+        const leftWidth = Math.min(58, Math.max(36, Math.floor(width * 0.44)));
+        const rightWidth = Math.max(1, width - leftWidth - 3);
+        const right = detailLines(results[sel], rightWidth);
+        const body: string[] = [];
+        for (let i = top; i < Math.min(results.length, top + visibleCount); i++) {
+          const result = results[i];
+          const prefix = i === sel ? theme.fg("accent", "›") : " ";
+          const titleText = cleanLine(result.title || result.session_id, leftWidth - 4);
+          const rowTitle = prefix + theme.fg(i === sel ? "accent" : "text", `${String(i + 1).padStart(2)} ${titleText}`);
+          const metric = resultMetric(result);
+          const meta = theme.fg("dim", `   ${result.session_id.slice(0, 8)} · ${sourceLabel(result)}${metric ? ` · ${metric}` : ""} · ${result.ts?.slice(0, 10) ?? "unknown"}`);
+          body.push(rowTitle, meta);
+        }
+        const bodyLines = Math.max(body.length, right.length);
+        for (let i = 0; i < bodyLines; i++) {
+          lines.push(combinePanes(body[i] ?? "", right[i] ?? "", leftWidth, theme));
+        }
+      } else {
+        for (let i = top; i < Math.min(results.length, top + visibleCount); i++) {
+          const result = results[i];
+          const prefix = i === sel ? theme.fg("accent", "›") : " ";
+          const metric = resultMetric(result);
+          lines.push(prefix + theme.fg(i === sel ? "accent" : "text", `${String(i + 1).padStart(2)} ${cleanLine(result.title || result.session_id, width - 5)}`));
+          lines.push(theme.fg("dim", `   ${result.session_id.slice(0, 8)} · ${sourceLabel(result)}${metric ? ` · ${metric}` : ""} · ${result.ts?.slice(0, 10) ?? "unknown"} · ${cleanLine(abbreviateHome(result.project), width - 35)}`));
+          lines.push(theme.fg("dim", "   〉 ") + truncateToWidth(highlightRecallMarkers(cleanLine(result.snippet, width), theme), Math.max(1, width - 5)));
+        }
+      }
+
+      lines.push(theme.fg("dim", "↑↓ move · enter select · esc close"));
+      return lines.map((line) => truncateToWidth(line, width, ""));
+    };
+
+    return {
+      render,
+      invalidate: () => {},
+      handleInput: (data: string) => {
+        if (matchesKey(data, Key.up)) sel--;
+        else if (matchesKey(data, Key.down)) sel++;
+        else if (matchesKey(data, Key.enter)) return done(String(sel));
+        else if (matchesKey(data, Key.escape)) return done(null);
+        clamp();
+        tui.requestRender();
+      },
+    };
+  });
+  return selected === null ? null : results[Number(selected)] ?? null;
 }
 
 function expandPath(path: string, cwd: string): string {
@@ -461,7 +598,9 @@ async function browseResults(
     ctx.ui.notify("No matching sessions", "warning");
     return false;
   }
-  const selected = await choose(ctx, title, resultRows(results));
+  const selected = ctx.mode === "tui"
+    ? await chooseRecallResult(ctx, title, results)
+    : await choose(ctx, title, resultRows(results));
   return selected ? handleResult(pi, ctx, selected) : false;
 }
 
@@ -474,7 +613,7 @@ async function runBackendWithLoader(
   return ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
     const loader = new BorderedLoader(tui, theme, label);
     loader.onAbort = () => done(null);
-    runBackend(pi, args, loader.signal)
+    runBackend(pi, args, loader.signal, ctx.cwd)
       .then(done)
       .catch((error) => {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
@@ -496,7 +635,7 @@ async function maintenance(pi: ExtensionAPI, ctx: ExtensionCommandContext): Prom
     if (!action) return;
     if (action === "stats") {
       try {
-        const output = await runBackend(pi, ["index", "--stats"]);
+        const output = await runBackend(pi, ["index", "--stats"], undefined, ctx.cwd);
         await ctx.ui.editor("Recall index status (Esc to close)", output.trim());
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
@@ -547,13 +686,13 @@ async function recallDashboard(pi: ExtensionAPI, ctx: ExtensionCommandContext): 
       ]);
       if (!mode) continue;
       try {
-        if (await browseResults(pi, ctx, await searchBackend(pi, query, mode), `Recall: ${query}`)) return;
+        if (await browseResults(pi, ctx, await searchBackend(pi, query, mode, undefined, 20, undefined, ctx.cwd), `Recall: ${query}`)) return;
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
     } else if (action === "recent") {
       try {
-        if (await browseResults(pi, ctx, await recentBackend(pi), "Recent sessions")) return;
+        if (await browseResults(pi, ctx, await recentBackend(pi, 50, ctx.cwd), "Recent sessions")) return;
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
@@ -574,7 +713,7 @@ export default function recallExtension(pi: ExtensionAPI) {
       const query = args.trim();
       if (!query) return recallDashboard(pi, ctx);
       try {
-        await browseResults(pi, ctx, await searchBackend(pi, query), `Recall: ${query}`);
+        await browseResults(pi, ctx, await searchBackend(pi, query, "fuzzy", undefined, 20, undefined, ctx.cwd), `Recall: ${query}`);
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
@@ -595,7 +734,7 @@ export default function recallExtension(pi: ExtensionAPI) {
       source: Type.Optional(StringEnum(["claude", "pi", "codex"] as const)),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
     }),
-    async execute(_toolCallId, params, signal) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const results = await searchBackend(
         pi,
         params.query,
@@ -603,6 +742,7 @@ export default function recallExtension(pi: ExtensionAPI) {
         params.source,
         params.limit ?? 10,
         signal,
+        ctx.cwd,
       );
       const text = results.length
         ? results.map((result, index) => [

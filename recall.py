@@ -922,25 +922,38 @@ def _chunk(text: str):
 _EMBEDDER = None   # cache the model so repeated searches (e.g. the TUI) reuse it
 
 
+class SemanticUnavailable(RuntimeError):
+    pass
+
+
+def _semantic_dependency_error():
+    try:
+        from fastembed import TextEmbedding  # noqa: F401
+        import numpy as np  # noqa: F401
+    except ImportError:
+        return "semantic mode needs fastembed:\n    pip install fastembed numpy"
+    return None
+
+
 def _load_embedder():
     global _EMBEDDER
     if _EMBEDDER is not None:
         return _EMBEDDER
-    try:
-        from fastembed import TextEmbedding
-    except ImportError:
-        print("semantic mode needs fastembed:\n    pip install fastembed numpy",
-              file=sys.stderr)
-        return None, None
+    error = _semantic_dependency_error()
+    if error:
+        raise SemanticUnavailable(error)
+    from fastembed import TextEmbedding
     import numpy as np
     _EMBEDDER = (TextEmbedding(model_name=EMBED_MODEL), np)
     return _EMBEDDER
 
 
 def build_embeddings(conn, quiet=False, rechunk=False):
-    model, np = _load_embedder()
-    if model is None:
-        return
+    try:
+        model, np = _load_embedder()
+    except SemanticUnavailable as e:
+        print(str(e), file=sys.stderr)
+        raise SystemExit(1)
     meta = conn.execute("SELECT model,dim FROM embed_meta").fetchone()
     # re-chunk from scratch if the model changed or the caller forced it
     # (e.g. after changing CHUNK_TARGET) — existing chunks reflect the old config
@@ -1069,9 +1082,11 @@ def search_semantic(conn, args, k_rrf=60):
     if not conn.execute("SELECT 1 FROM embeddings LIMIT 1").fetchone():
         print("no embeddings yet — run:  recall index -s", file=sys.stderr)
         return []
-    model, np = _load_embedder()
-    if model is None:
-        return []
+    try:
+        model, np = _load_embedder()
+    except SemanticUnavailable as e:
+        print(str(e), file=sys.stderr)
+        raise SystemExit(1)
     cids, mids, sids, txts, mat = _embedding_matrix(conn, np)
     if mat is None:
         return []
@@ -2094,7 +2109,7 @@ def tui(conn, args):
     import curses
     from types import SimpleNamespace
 
-    has_embed = bool(conn.execute("SELECT 1 FROM embeddings LIMIT 1").fetchone())
+    has_embed = bool(conn.execute("SELECT 1 FROM embeddings LIMIT 1").fetchone()) and _semantic_dependency_error() is None
     modes = ["fuzzy", "regex"] + (["semantic"] if has_embed else [])
     start = "regex" if getattr(args, "regex", False) else \
             "semantic" if getattr(args, "semantic", False) and has_embed else "fuzzy"
