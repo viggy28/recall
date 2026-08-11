@@ -20,6 +20,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const BACKEND = join(PACKAGE_ROOT, "recall.py");
+const PACKAGE_VENV_PYTHON = join(PACKAGE_ROOT, ".venv", "bin", "python");
 const CONTEXTS_DIR = join(homedir(), ".recall", "contexts");
 const CONTEXT_NAME = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const MAX_GENERATION_CHARS = 120_000;
@@ -48,8 +49,19 @@ function cleanLine(value: string | null | undefined, max = 110): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
+async function pythonBinary(): Promise<string> {
+  const configured = process.env.RECALL_PYTHON?.trim();
+  if (configured) return configured;
+  try {
+    await stat(PACKAGE_VENV_PYTHON);
+    return PACKAGE_VENV_PYTHON;
+  } catch {
+    return "python3";
+  }
+}
+
 async function runBackend(pi: ExtensionAPI, args: string[], signal?: AbortSignal) {
-  const result = await pi.exec("python3", [BACKEND, ...args], { signal });
+  const result = await pi.exec(await pythonBinary(), [BACKEND, ...args], { signal });
   if (result.code !== 0) {
     throw new Error((result.stderr || result.stdout || `recall exited ${result.code}`).trim());
   }

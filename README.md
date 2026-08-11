@@ -15,40 +15,55 @@ State is stored under `~/.recall`:
 - `~/.recall/recall.db` — SQLite index
 - `~/.recall/contexts/` — reusable Markdown context banks
 
-## CLI usage
+## Install and dependency management
+
+### No-install core usage
+
+The core CLI has no required third-party Python packages:
 
 ```bash
-python3 recall.py --help
-python3 recall.py index
 python3 recall.py search "deadlock investigation"
-python3 recall.py search --regex "IndexError|sqlite3"
-python3 recall.py search --semantic "why did we change the retry logic"
-python3 recall.py recent
-python3 recall.py tui
+python3 recall.py index
 ```
 
-Search options include source, project, role, date range, result limit, JSON output, and typo-tolerant fuzzy matching.
+### Standalone CLI install
+
+Use a virtual environment so Python dependencies stay isolated:
 
 ```bash
-python3 recall.py search "migration plan" --source pi --project recall --role user --limit 20 --json
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+recall --help
 ```
 
-## Context banks
+### Optional semantic search dependencies
 
-`recall` can create, import, export, edit, delete, and generate reusable Markdown context files.
+Semantic search/indexing requires `fastembed` and `numpy`. Install them with the `semantic` extra:
 
 ```bash
-python3 recall.py context create events-db
-python3 recall.py context list
-python3 recall.py context show events-db
-python3 recall.py context path events-db
-python3 recall.py context import ./handoff.md --name events-db
-python3 recall.py context export events-db ./events-db.md
-python3 recall.py context delete events-db --force
-python3 recall.py context generate events-db --session <session-id-prefix>
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[semantic]"
+recall index --semantic
+recall search --semantic "why did we change the retry logic"
 ```
 
-## Pi extension
+If you do not want to install the package itself, you can install only the optional dependencies into your active environment:
+
+```bash
+pip install -r requirements-semantic.txt
+python3 recall.py index --semantic
+```
+
+The Python package metadata lives in `pyproject.toml`. The optional dependency group is:
+
+```toml
+[project.optional-dependencies]
+semantic = ["fastembed", "numpy"]
+```
+
+## Pi extension mode
 
 This package includes a Pi extension at `extensions/recall/index.ts`.
 
@@ -58,6 +73,62 @@ It provides:
 - `recall_search` — tool for searching local session history
 - `recall_context` — tool for listing, showing, attaching, or saving context banks
 
+The extension runs the bundled `recall.py` backend. Python selection order is:
+
+1. `RECALL_PYTHON`, if set
+2. `.venv/bin/python` inside the package root, if present
+3. `python3`
+
+For semantic search in Pi extension mode, install the optional Python dependencies into a Python that the extension will use. Recommended local package venv:
+
+```bash
+cd /path/to/recall-package
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[semantic]"
+```
+
+Or point Pi at another Python environment:
+
+```bash
+export RECALL_PYTHON=/absolute/path/to/venv/bin/python
+```
+
+## CLI usage
+
+```bash
+recall --help
+recall index
+recall search "deadlock investigation"
+recall search --regex "IndexError|sqlite3"
+recall search --semantic "why did we change the retry logic"
+recall recent
+recall tui
+```
+
+Search options include source, project, role, date range, result limit, JSON output, and typo-tolerant fuzzy matching.
+
+```bash
+recall search "migration plan" --source pi --project recall --role user --limit 20 --json
+```
+
+If you have not installed the package, replace `recall` with `python3 recall.py` in the commands above.
+
+## Context banks
+
+`recall` can create, import, export, edit, delete, and generate reusable Markdown context files.
+
+```bash
+recall context create events-db
+recall context list
+recall context show events-db
+recall context path events-db
+recall context import ./handoff.md --name events-db
+recall context export events-db ./events-db.md
+recall context delete events-db --force
+recall context generate events-db --session <session-id-prefix>
+```
+
 ## Development
 
 Run the test suite with:
@@ -65,5 +136,3 @@ Run the test suite with:
 ```bash
 python3 -m unittest -v
 ```
-
-Package metadata is in `package.json`; the Python backend is `recall.py`.

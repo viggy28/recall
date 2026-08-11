@@ -12,6 +12,8 @@
   "license": "MIT",
   "files": [
     "recall.py",
+    "pyproject.toml",
+    "requirements-semantic.txt",
     "extensions/recall/index.ts",
     "README.md"
   ],

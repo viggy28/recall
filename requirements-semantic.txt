@@ -1,0 +1,4 @@
+# Optional dependencies for semantic recall search/indexing.
+# Core fuzzy/regex search uses only the Python standard library.
+fastembed>=0.3
+numpy>=1.24
