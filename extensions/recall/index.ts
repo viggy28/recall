@@ -379,11 +379,31 @@ function applyContextPatch(original: string, edits: ContextEdit[]): string {
   return updated;
 }
 
+function changedContextLines(oldText: string, newText: string): { removed: string[]; added: string[] } {
+  const oldLines = oldText.split("\n");
+  const newLines = newText.split("\n");
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix
+    && suffix < newLines.length - prefix
+    && oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) suffix++;
+  return {
+    removed: oldLines.slice(prefix, oldLines.length - suffix),
+    added: newLines.slice(prefix, newLines.length - suffix),
+  };
+}
+
 function focusedContextDiff(edits: ContextEdit[]): string {
   const blocks = edits.map((edit, index) => {
-    const removed = edit.old_text.split("\n").map((line) => `- ${line}`).join("\n");
-    const added = edit.new_text ? edit.new_text.split("\n").map((line) => `+ ${line}`).join("\n") : "+ (deleted)";
-    return `@@ change ${index + 1} @@\n${removed}\n${added}`;
+    const changed = changedContextLines(edit.old_text, edit.new_text);
+    const lines = [`@@ change ${index + 1} @@`];
+    lines.push(...changed.removed.filter(Boolean).map((line) => `- ${line}`));
+    lines.push(...changed.added.filter(Boolean).map((line) => `+ ${line}`));
+    if (changed.added.length === 0) lines.push("+ (deleted)");
+    return lines.join("\n");
   });
   return blocks.join("\n\n");
 }
