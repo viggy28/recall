@@ -502,23 +502,30 @@ async function reviewContextText(
   return ctx.ui.custom<ContextReviewAction>((tui, theme, _keybindings, done) => {
     const rawLines = [title, "", ...text.split("\n")];
     let scroll = 0;
-    const pageSize = 22;
+    let lastPageSize = 22;
     return {
       render(width: number) {
-        const contentWidth = Math.max(1, width - 2);
-        const styled = rawLines.map((line, index) => {
-          const clipped = truncateToWidth(line, contentWidth);
-          if (index === 0) return theme.fg("accent", theme.bold(clipped));
-          if (!markdown && line.startsWith("+")) return theme.fg("toolDiffAdded", clipped);
-          if (!markdown && line.startsWith("-")) return theme.fg("toolDiffRemoved", clipped);
-          if (markdown && line.startsWith("#")) return theme.fg("accent", theme.bold(clipped));
-          return theme.fg(!markdown && line.startsWith("@@") ? "accent" : "toolDiffContext", clipped);
+        const contentWidth = Math.max(12, width - 2);
+        const styled = rawLines.flatMap((line, index) => {
+          const color = index === 0 || (markdown && line.startsWith("#"))
+            ? (part: string) => theme.fg("accent", theme.bold(part))
+            : !markdown && line.startsWith("+")
+              ? (part: string) => theme.fg("toolDiffAdded", part)
+              : !markdown && line.startsWith("-")
+                ? (part: string) => theme.fg("toolDiffRemoved", part)
+                : !markdown && line.startsWith("@@")
+                  ? (part: string) => theme.fg("accent", part)
+                  : (part: string) => theme.fg("toolDiffContext", part);
+          const wrapped = wrapTextWithAnsi(line || " ", contentWidth);
+          return wrapped.map((part) => color(part));
         });
-        const maxScroll = Math.max(0, styled.length - pageSize);
+        // Use most of the terminal while leaving room for Pi's footer and review controls.
+        lastPageSize = Math.max(12, Math.min(48, tui.terminal.rows - 8));
+        const maxScroll = Math.max(0, styled.length - lastPageSize);
         scroll = Math.min(scroll, maxScroll);
-        const visible = styled.slice(scroll, scroll + pageSize).map((line) => ` ${line}`);
-        if (styled.length > pageSize) visible.push(theme.fg("dim", ` ${scroll + 1}-${Math.min(scroll + pageSize, styled.length)} of ${styled.length}`));
-        visible.push(theme.fg("dim", " [a] Apply  [r] Revise  [e] Full editor  [Esc] Cancel"));
+        const visible = styled.slice(scroll, scroll + lastPageSize).map((line) => ` ${line}`);
+        if (styled.length > lastPageSize) visible.push(theme.fg("dim", ` ${scroll + 1}-${Math.min(scroll + lastPageSize, styled.length)} of ${styled.length}`));
+        visible.push(theme.fg("dim", " ↑↓ scroll  PgUp/PgDn page  [a] Apply  [r] Revise  [e] Full editor  [Esc] Cancel"));
         return visible;
       },
       handleInput(data: string) {
@@ -528,6 +535,8 @@ async function reviewContextText(
         if (data.toLowerCase() === "e") return done("editor");
         if (matchesKey(data, Key.up)) scroll = Math.max(0, scroll - 1);
         if (matchesKey(data, Key.down)) scroll++;
+        if (matchesKey(data, "pageUp")) scroll = Math.max(0, scroll - lastPageSize);
+        if (matchesKey(data, "pageDown")) scroll += lastPageSize;
         tui.requestRender();
       },
       invalidate() {},
