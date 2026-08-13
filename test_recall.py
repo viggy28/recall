@@ -212,9 +212,21 @@ class ContextBankTests(unittest.TestCase):
         self.assertIn("Migration is complete", updated)
         self.assertNotIn("Migration is planned", updated)
         self.assertNotIn("Is it ready?", updated)
-        diff = recall._context_diff("project", original, updated)
+        diff = recall._context_diff("project", original, updated, color=False)
         self.assertIn("-- Migration is planned", diff)
         self.assertIn("+- Migration is complete", diff)
+        self.assertNotIn(" ## Current state", diff)
+
+    def test_context_diff_uses_pr_style_colors_on_a_terminal(self):
+        original = "# Project\n\n- Planned.\n"
+        updated = "# Project\n\n- Complete.\n"
+
+        diff = recall._context_diff("project", original, updated, color=True)
+
+        self.assertIn("\033[1m--- project (current)", diff)
+        self.assertIn("\033[36m@@", diff)
+        self.assertIn("\033[31m-- Planned.", diff)
+        self.assertIn("\033[32m+- Complete.", diff)
 
     def test_context_patch_rejects_malformed_model_output(self):
         for response in ("not json", "{}", '{"edits":[]}', '{"edits":[{"old_text":"","new_text":"x"}]}'):

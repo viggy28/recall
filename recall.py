@@ -1811,11 +1811,36 @@ Each old_text must be a non-empty, exact, unique substring. Edits must not overl
 '''
 
 
-def _context_diff(name: str, original: str, updated: str) -> str:
-    return "".join(difflib.unified_diff(
+def _color_context_diff(diff: str, enabled: bool | None = None) -> str:
+    if enabled is None:
+        enabled = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+    if not enabled:
+        return diff
+    colored = []
+    for line in diff.splitlines(keepends=True):
+        if line.startswith(("--- ", "+++ ")):
+            style = "\033[1m"       # bold file headers
+        elif line.startswith("@@"):
+            style = "\033[36m"      # cyan hunk headers
+        elif line.startswith("-"):
+            style = "\033[31m"      # red removals
+        elif line.startswith("+"):
+            style = "\033[32m"      # green additions
+        else:
+            style = ""
+        colored.append(f"{style}{line}\033[0m" if style else line)
+    return "".join(colored)
+
+
+def _context_diff(name: str, original: str, updated: str,
+                  color: bool | None = None) -> str:
+    # Zero context keeps review focused on changed lines. With the old default
+    # of three lines, nearby edits merged into a wall of unrelated Markdown.
+    diff = "".join(difflib.unified_diff(
         original.splitlines(keepends=True), updated.splitlines(keepends=True),
-        fromfile=f"{name} (current)", tofile=f"{name} (proposed)",
+        fromfile=f"{name} (current)", tofile=f"{name} (proposed)", n=0,
     ))
+    return _color_context_diff(diff, color)
 
 
 def _context_backup_path(name: str) -> Path:
