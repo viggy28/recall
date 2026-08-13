@@ -140,10 +140,13 @@ class ContextBankTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.old_contexts_dir = recall.CONTEXTS_DIR
+        self.old_context_history_dir = recall.CONTEXT_HISTORY_DIR
         recall.CONTEXTS_DIR = Path(self.tmp.name) / "contexts"
+        recall.CONTEXT_HISTORY_DIR = Path(self.tmp.name) / "context-history"
 
     def tearDown(self):
         recall.CONTEXTS_DIR = self.old_contexts_dir
+        recall.CONTEXT_HISTORY_DIR = self.old_context_history_dir
         self.tmp.cleanup()
 
     def test_create_uses_template_and_refuses_overwrite(self):
@@ -191,6 +194,114 @@ class ContextBankTests(unittest.TestCase):
         with redirect_stdout(out):
             recall.main(["context", "events-db"])
         self.assertEqual(out.getvalue(), path.read_text(encoding="utf-8"))
+
+    def test_context_patch_updates_multiple_unique_statements(self):
+        original = "# Project\n\n## Current state\n\n- Migration is planned.\n\n## Open questions\n\n- Is it ready?\n"
+        response = __import__("json").dumps({"edits": [
+            {"old_text": "- Migration is planned.", "new_text": "- Migration is complete."},
+            {"old_text": "- Is it ready?\n", "new_text": ""},
+        ]})
+
+        edits = recall._parse_context_patch(response)
+        updated = recall._apply_context_patch(original, edits)
+
+        self.assertIn("Migration is complete", updated)
+        self.assertNotIn("Migration is planned", updated)
+        self.assertNotIn("Is it ready?", updated)
+        diff = recall._context_diff("project", original, updated)
+        self.assertIn("-- Migration is planned", diff)
+        self.assertIn("+- Migration is complete", diff)
+
+    def test_context_patch_rejects_malformed_model_output(self):
+        for response in ("not json", "{}", '{"edits":[]}', '{"edits":[{"old_text":"","new_text":"x"}]}'):
+            with self.subTest(response=response), self.assertRaises(recall.ContextError):
+                recall._parse_context_patch(response)
+
+    def test_context_patch_rejects_ambiguous_and_overlapping_edits(self):
+        with self.assertRaisesRegex(recall.ContextError, "exactly once"):
+            recall._apply_context_patch("same same", [{"old_text": "same", "new_text": "new"}])
+        with self.assertRaisesRegex(recall.ContextError, "overlapping"):
+            recall._apply_context_patch("abcdef", [
+                {"old_text": "abc", "new_text": "x"},
+                {"old_text": "bcde", "new_text": "y"},
+            ])
+
+    def test_context_update_writes_verified_backup_and_undo(self):
+        path = recall._context_create("project")
+        original = path.read_text(encoding="utf-8")
+        updated = original.replace("## Decisions", "## Decisions\n\n- Done.")
+
+        written = recall._write_context_update("project", original, updated)
+
+        self.assertEqual(written.read_text(encoding="utf-8"), updated)
+        self.assertEqual(recall._context_backup_path("project").read_text(encoding="utf-8"), original)
+        recall._context_undo("project")
+        self.assertEqual(written.read_text(encoding="utf-8"), original)
+        self.assertEqual(recall._context_backup_path("project").read_text(encoding="utf-8"), updated)
+
+    def test_context_update_detects_concurrent_change(self):
+        path = recall._context_create("project")
+        original = path.read_text(encoding="utf-8")
+        path.write_text(original + "\nConcurrent change.\n", encoding="utf-8")
+
+        with self.assertRaisesRegex(recall.ContextError, "changed while"):
+            recall._write_context_update("project", original, original + "\nProposed.\n")
+
+    def test_context_update_cli_is_one_operation(self):
+        path = recall._context_create("project")
+        original = path.read_text(encoding="utf-8")
+        response = __import__("json").dumps({"edits": [{
+            "old_text": "## Open questions",
+            "new_text": "## Open questions\n\n- None.",
+        }]})
+        out = io.StringIO()
+
+        with mock.patch.object(recall, "_run_pi_generation", return_value=response), redirect_stdout(out):
+            recall.main(["context", "update", "project", "No open questions remain.", "--yes"])
+
+        self.assertIn("updated and verified", out.getvalue())
+        self.assertIn("- None.", path.read_text(encoding="utf-8"))
+        self.assertEqual(recall._context_backup_path("project").read_text(encoding="utf-8"), original)
+
+    def test_context_update_cancel_never_writes(self):
+        path = recall._context_create("project")
+        original = path.read_text(encoding="utf-8")
+        response = '{"edits":[{"old_text":"## Decisions","new_text":"## Decisions\\n\\n- Done."}]}'
+        args = SimpleNamespace(name="project", instruction="Done.", instruction_file=None,
+                               replace=None, model=None, dry_run=False, yes=False)
+
+        with mock.patch.object(recall, "_run_pi_generation", return_value=response), \
+                mock.patch.object(recall.sys.stdin, "isatty", return_value=True), \
+                mock.patch("builtins.input", return_value="cancel"):
+            self.assertIsNone(recall._context_update(args))
+
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+        self.assertFalse(recall._context_backup_path("project").exists())
+
+    def test_context_update_supports_model_free_replacement(self):
+        path = recall._context_create("project")
+        args = SimpleNamespace(name="project", instruction=None, instruction_file=None,
+                               replace=[["## Decisions", "## Decisions\n\n- Done."]],
+                               model=None, dry_run=False, yes=True)
+
+        with mock.patch.object(recall, "_run_pi_generation") as generate:
+            recall._context_update(args)
+
+        generate.assert_not_called()
+        self.assertIn("- Done.", path.read_text(encoding="utf-8"))
+
+    def test_context_update_dry_run_never_writes(self):
+        path = recall._context_create("project")
+        original = path.read_text(encoding="utf-8")
+        response = '{"edits":[{"old_text":"## Decisions","new_text":"## Decisions\\n\\n- Done."}]}'
+        out = io.StringIO()
+
+        with mock.patch.object(recall, "_run_pi_generation", return_value=response), redirect_stdout(out):
+            recall.main(["context", "update", "project", "Done.", "--dry-run"])
+
+        self.assertIn("project (proposed)", out.getvalue())
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+        self.assertFalse(recall._context_backup_path("project").exists())
 
     def _generation_db(self):
         conn = sqlite3.connect(":memory:")
