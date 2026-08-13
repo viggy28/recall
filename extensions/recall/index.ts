@@ -307,6 +307,27 @@ async function contextNames(): Promise<string[]> {
   }
 }
 
+function canonicalContextName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+async function resolveExistingContextName(requested: string): Promise<string> {
+  const name = requested.trim();
+  if (CONTEXT_NAME.test(name)) {
+    try {
+      await stat(contextPath(name));
+      return name;
+    } catch (error: any) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  const canonical = canonicalContextName(name);
+  const matches = (await contextNames()).filter((candidate) => canonicalContextName(candidate) === canonical);
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) throw new Error(`Context name '${requested}' is ambiguous: ${matches.join(", ")}`);
+  throw new Error(`No Recall context matches '${requested}'. Available contexts: ${(await contextNames()).join(", ") || "none"}.`);
+}
+
 async function writeVerified(path: string, text: string, directoryMode?: number): Promise<string> {
   await mkdir(dirname(path), { recursive: true, mode: directoryMode ?? 0o755 });
   if (directoryMode !== undefined) await chmod(dirname(path), directoryMode);
@@ -1037,9 +1058,10 @@ export default function recallExtension(pi: ExtensionAPI) {
         const path = await saveCurrentSessionContext(pi, ctx, params.name, signal);
         return { content: [{ type: "text", text: path ? `Saved and verified ${path}` : "Context creation cancelled." }], details: { path } };
       }
+      const resolvedName = await resolveExistingContextName(params.name);
       if (params.action === "update") {
         if (!params.instruction?.trim()) throw new Error("update requires the user's exact instruction");
-        const result = await updateContextInteractively(ctx, params.name, params.instruction, signal);
+        const result = await updateContextInteractively(ctx, resolvedName, params.instruction, signal);
         const text = result.status === "updated"
           ? `Updated and verified ${result.path}. Previous revision retained; use Undo last update in /recall.`
           : result.status === "proposed"
@@ -1047,12 +1069,12 @@ export default function recallExtension(pi: ExtensionAPI) {
             : "Context update cancelled; no changes were written.";
         return { content: [{ type: "text", text }], details: result };
       }
-      const path = contextPath(params.name);
+      const path = contextPath(resolvedName);
       const text = await readFile(path, "utf8");
-      if (params.action === "attach") attachContext(pi, params.name, text, true);
+      if (params.action === "attach") attachContext(pi, resolvedName, text, true);
       return {
-        content: [{ type: "text", text: params.action === "attach" ? `Attached ${params.name}.\n\n${text}` : text }],
-        details: { name: params.name, path, attached: params.action === "attach" },
+        content: [{ type: "text", text: params.action === "attach" ? `Attached ${resolvedName}.\n\n${text}` : text }],
+        details: { name: resolvedName, requestedName: params.name, path, attached: params.action === "attach" },
       };
     },
   });
