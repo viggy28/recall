@@ -123,11 +123,15 @@ recall context create events-db
 recall context list
 recall context show events-db
 recall context path events-db
+recall context update events-db "The migration is complete; remove the resolved open question."
+recall context undo events-db
 recall context import ./handoff.md --name events-db
 recall context export events-db ./events-db.md
 recall context delete events-db --force
 recall context generate events-db --session <session-id-prefix>
 ```
+
+`context update` sends the existing context and your natural-language instruction to Pi's configured model, shows a focused diff, and offers Apply, Revise, Full editor, or Cancel in the same command. For model-free scripts, repeat `--replace OLD NEW`. In Pi, ask naturally (for example, “Update my events-db context: …”); the `recall_context` tool runs the same proposal and approval flow without a separate apply step.
 
 ## Development
 
