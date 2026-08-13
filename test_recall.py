@@ -306,6 +306,8 @@ class ContextBankTests(unittest.TestCase):
 
         self.assertIn("Generating a proposed update", out.getvalue())
         self.assertIn("updated and verified", out.getvalue())
+        self.assertIn(f"previous revision: {recall._context_backup_path('project')}", out.getvalue())
+        self.assertIn("undo: recall context undo project", out.getvalue())
         self.assertIn("- None.", path.read_text(encoding="utf-8"))
         self.assertEqual(recall._context_backup_path("project").read_text(encoding="utf-8"), original)
 

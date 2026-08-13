@@ -535,7 +535,7 @@ async function updateContextInteractively(
       if (!await ctx.ui.confirm("Apply edited context?", `Replace ${name} with the reviewed document?`)) continue;
     }
     const savedPath = await applyContextUpdate(name, original, updated);
-    ctx.ui.notify(`Updated and verified ${savedPath}`, "info");
+    ctx.ui.notify(`Updated and verified ${savedPath}. Previous revision retained; use Undo last update in /recall.`, "info");
     return { status: "updated", path: savedPath };
   }
 }
@@ -1017,7 +1017,7 @@ export default function recallExtension(pi: ExtensionAPI) {
         if (!params.instruction?.trim()) throw new Error("update requires the user's exact instruction");
         const result = await updateContextInteractively(ctx, params.name, params.instruction, signal);
         const text = result.status === "updated"
-          ? `Updated and verified ${result.path}`
+          ? `Updated and verified ${result.path}. Previous revision retained; use Undo last update in /recall.`
           : result.status === "proposed"
             ? `Proposed changes (not applied):\n\n${result.diff}`
             : "Context update cancelled; no changes were written.";

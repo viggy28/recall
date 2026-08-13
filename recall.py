@@ -2308,6 +2308,8 @@ def context_command(args, conn=None) -> int:
         path = _context_update(args)
         if path:
             print(f"updated and verified {path}")
+            print(f"previous revision: {_context_backup_path(args.name)}")
+            print(f"undo: recall context undo {args.name}")
     elif args.context_cmd == "undo":
         path = _context_undo(args.name)
         print(f"restored and verified {path}")
