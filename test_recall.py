@@ -38,6 +38,18 @@ class TuiPresentationTests(unittest.TestCase):
         self.assertTrue(all(len(line.replace(recall.HL[0], "").replace(recall.HL[1], "")) <= 32
                             for line in lines))
 
+    def test_tui_clipping_counts_wide_characters_as_two_cells(self):
+        self.assertEqual(recall._tui_cell_width("ab〉c"), 5)
+        self.assertEqual(recall._tui_clip_cells("ab〉c", 4), "ab〉")
+        self.assertEqual(recall._tui_clip_cells("ab〉c", 3), "ab")
+
+    def test_detail_pane_reserves_the_terminal_last_column(self):
+        list_width, detail_x, detail_width = recall._tui_split_widths(200)
+
+        self.assertEqual(list_width, 58)
+        self.assertEqual(detail_x, 60)
+        self.assertEqual(detail_x + detail_width, 199)
+
 
 class SessionScopedFuzzySearchTests(unittest.TestCase):
     def setUp(self):
