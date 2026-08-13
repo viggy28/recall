@@ -119,7 +119,8 @@ If you have not installed the package, replace `recall` with `python3 recall.py`
 `recall` can create, import, export, edit, delete, and generate reusable Markdown context files.
 
 ```bash
-recall context create events-db
+recall context create events-db "Track the durable state, decisions, and open questions for the Events DB"
+recall context create scratch --blank
 recall context list
 recall context show events-db
 recall context path events-db
@@ -131,7 +132,7 @@ recall context delete events-db --force
 recall context generate events-db --session <session-id-prefix>
 ```
 
-`context update` sends the existing context and your natural-language instruction to Pi's configured model, shows a focused diff, and offers Apply, Revise, Full editor, or Cancel in the same command. For model-free scripts, repeat `--replace OLD NEW`. In Pi, ask naturally (for example, “Update my events-db context: …”); the `recall_context` tool runs the same proposal and approval flow without a separate apply step.
+`context create` and `context update` use natural-language descriptions, show a focused preview, and offer Apply, Revise, Full editor, or Cancel in the same command. Use `create --blank` for the old empty template; creation no longer requires session IDs. For model-free update scripts, repeat `--replace OLD NEW`. In Pi, ask naturally (for example, “Create an events-db context that tracks…” or “Update my events-db context: …”); the `recall_context` tool runs the same review and approval flow without a separate apply step.
 
 ## Development
 
