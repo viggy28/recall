@@ -162,6 +162,30 @@ class ContextBankTests(unittest.TestCase):
         with self.assertRaisesRegex(recall.ContextError, "already exists"):
             recall._context_create("events-db")
 
+    def test_natural_create_is_one_reviewed_operation(self):
+        response = """# Project\n\n## Current state\n\n- Ready.\n\n## Decisions\n\n## Constraints\n\n## Open questions\n\n## References"""
+        args = SimpleNamespace(name="project", instruction="Track project readiness.",
+                               instruction_file=None, model=None, blank=False,
+                               dry_run=False, yes=True, force=False)
+        out = io.StringIO()
+
+        with mock.patch.object(recall, "_run_pi_generation", return_value=response), redirect_stdout(out):
+            path = recall._context_create_natural(args)
+
+        self.assertIn("Generating a context draft", out.getvalue())
+        self.assertIn("- Ready.", path.read_text(encoding="utf-8"))
+
+    def test_natural_create_dry_run_does_not_write(self):
+        response = """# Project\n## Current state\n## Decisions\n## Constraints\n## Open questions\n## References"""
+        args = SimpleNamespace(name="project", instruction="Track readiness.",
+                               instruction_file=None, model=None, blank=False,
+                               dry_run=True, yes=False, force=False)
+
+        with mock.patch.object(recall, "_run_pi_generation", return_value=response):
+            self.assertIsNone(recall._context_create_natural(args))
+
+        self.assertFalse(recall._context_path("project").exists())
+
     def test_context_name_rejects_paths_and_invalid_names(self):
         for name in ("../events", "Events", "events_db", "-events", "events-", "a" * 65):
             with self.subTest(name=name), self.assertRaises(recall.ContextError):

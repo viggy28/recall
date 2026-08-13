@@ -492,10 +492,15 @@ async function proposeContextUpdate(
   });
 }
 
-async function reviewContextUpdate(ctx: ExtensionContext, name: string, diff: string): Promise<ContextReviewAction> {
+async function reviewContextText(
+  ctx: ExtensionContext,
+  title: string,
+  text: string,
+  markdown = false,
+): Promise<ContextReviewAction> {
   if (ctx.mode !== "tui") return "cancel";
   return ctx.ui.custom<ContextReviewAction>((tui, theme, _keybindings, done) => {
-    const rawLines = [`Update ${name}`, "", ...diff.split("\n")];
+    const rawLines = [title, "", ...text.split("\n")];
     let scroll = 0;
     const pageSize = 22;
     return {
@@ -504,9 +509,10 @@ async function reviewContextUpdate(ctx: ExtensionContext, name: string, diff: st
         const styled = rawLines.map((line, index) => {
           const clipped = truncateToWidth(line, contentWidth);
           if (index === 0) return theme.fg("accent", theme.bold(clipped));
-          if (line.startsWith("+")) return theme.fg("toolDiffAdded", clipped);
-          if (line.startsWith("-")) return theme.fg("toolDiffRemoved", clipped);
-          return theme.fg(line.startsWith("@@") ? "accent" : "toolDiffContext", clipped);
+          if (!markdown && line.startsWith("+")) return theme.fg("toolDiffAdded", clipped);
+          if (!markdown && line.startsWith("-")) return theme.fg("toolDiffRemoved", clipped);
+          if (markdown && line.startsWith("#")) return theme.fg("accent", theme.bold(clipped));
+          return theme.fg(!markdown && line.startsWith("@@") ? "accent" : "toolDiffContext", clipped);
         });
         const maxScroll = Math.max(0, styled.length - pageSize);
         scroll = Math.min(scroll, maxScroll);
@@ -527,6 +533,10 @@ async function reviewContextUpdate(ctx: ExtensionContext, name: string, diff: st
       invalidate() {},
     };
   });
+}
+
+async function reviewContextUpdate(ctx: ExtensionContext, name: string, diff: string): Promise<ContextReviewAction> {
+  return reviewContextText(ctx, `Update ${name}`, diff);
 }
 
 async function applyContextUpdate(name: string, original: string, updated: string): Promise<string> {
@@ -636,16 +646,17 @@ async function generateContextDraft(
   ctx: ExtensionContext,
   name: string,
   outerSignal?: AbortSignal,
+  description?: string,
 ): Promise<string | null> {
   if (!ctx.model) throw new Error("No model is selected in Pi.");
-  const conversation = currentConversation(ctx);
-  if (!conversation.text.trim()) throw new Error("The current Pi session has no conversational context.");
-  if (conversation.truncated) {
+  const conversation = description ? null : currentConversation(ctx);
+  if (!description && !conversation?.text.trim()) throw new Error("The current Pi session has no conversational context.");
+  if (conversation?.truncated) {
     ctx.ui.notify("The active context exceeded 120,000 characters; generation will use the newest portion.", "warning");
   }
 
   return ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
-    const loader = new BorderedLoader(tui, theme, `Creating ${name} from the current Pi session…`);
+    const loader = new BorderedLoader(tui, theme, description ? `Creating ${name} from your description…` : `Creating ${name} from the current Pi session…`);
     loader.onAbort = () => done(null);
     void (async () => {
       const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model!);
@@ -656,13 +667,20 @@ async function generateContextDraft(
         role: "user",
         content: [{
           type: "text",
-          text: `Context name: ${name}\nCurrent Pi session: ${ctx.sessionManager.getSessionId()}\n\n<conversation>\n${conversation.text}\n</conversation>`,
+          text: description
+            ? `Context name: ${name}\n\n<description>\n${description}\n</description>`
+            : `Context name: ${name}\nCurrent Pi session: ${ctx.sessionManager.getSessionId()}\n\n<conversation>\n${conversation!.text}\n</conversation>`,
         }],
         timestamp: Date.now(),
       };
       const response = await complete(
         ctx.model!,
-        { systemPrompt: CONTEXT_SYSTEM_PROMPT.replace("<context name>", name), messages: [prompt] },
+        {
+          systemPrompt: description
+            ? CONTEXT_SYSTEM_PROMPT.replace("from the supplied Pi conversation", "from the supplied user description").replace("The conversation", "The description").replace("<context name>", name)
+            : CONTEXT_SYSTEM_PROMPT.replace("<context name>", name),
+          messages: [prompt],
+        },
         {
           apiKey: auth.apiKey,
           headers: auth.headers,
@@ -687,6 +705,48 @@ async function generateContextDraft(
     });
     return loader;
   });
+}
+
+async function createContextInteractively(
+  ctx: ExtensionContext,
+  name: string,
+  initialDescription?: string,
+  signal?: AbortSignal,
+): Promise<{ status: "created" | "cancelled" | "proposed"; path?: string; draft?: string }> {
+  if (!ctx.hasUI) throw new Error("Creating a context requires Pi's interactive UI.");
+  const path = contextPath(name);
+  try {
+    await stat(path);
+    throw new Error(`${name} already exists. Ask to update it instead.`);
+  } catch (error: any) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  let description = initialDescription?.trim();
+  if (!description) description = (await ctx.ui.editor(`What should ${name} capture?`, ""))?.trim();
+  if (!description) return { status: "cancelled" };
+
+  while (true) {
+    const draft = await generateContextDraft(ctx, name, signal, description);
+    if (!draft) return { status: "cancelled" };
+    if (ctx.mode !== "tui") return { status: "proposed", draft };
+    const action = await reviewContextText(ctx, `Create ${name}`, draft, true);
+    if (action === "cancel") return { status: "cancelled" };
+    if (action === "revise") {
+      const revised = await ctx.ui.editor(`Revise what ${name} should capture`, description);
+      if (revised?.trim()) description = revised.trim();
+      continue;
+    }
+    let finalDraft = draft;
+    if (action === "editor") {
+      const edited = await ctx.ui.editor(`Edit proposed ${name}`, draft);
+      if (edited === undefined) continue;
+      finalDraft = edited;
+      if (!await ctx.ui.confirm("Create context?", `Save the reviewed ${name} context?`)) continue;
+    }
+    await saveContext(name, finalDraft);
+    ctx.ui.notify(`Created and verified ${path}`, "info");
+    return { status: "created", path };
+  }
 }
 
 function attachContext(pi: ExtensionAPI, name: string, text: string, streaming = false) {
@@ -734,12 +794,19 @@ async function manageContexts(pi: ExtensionAPI, ctx: ExtensionCommandContext): P
   while (true) {
     const names = await contextNames();
     const choice = await choose(ctx, "Recall contexts", [
-      { value: "create", label: "Create blank context", description: "Write a context in Pi" },
+      { value: "create", label: "Create from description", description: "Describe it naturally, review the draft, then save" },
+      { value: "create-blank", label: "Create blank context", description: "Advanced: start with an empty Markdown template" },
       { value: "import", label: "Import Markdown", description: "Copy a local Markdown file into recall" },
       ...names.map((name) => ({ value: `context:${name}`, label: name, description: join(CONTEXTS_DIR, `${name}.md`) })),
     ]);
     if (!choice) return;
     if (choice === "create") {
+      const entered = await ctx.ui.input("Context name", "events-db");
+      if (!entered) continue;
+      await createContextInteractively(ctx, entered.trim());
+      continue;
+    }
+    if (choice === "create-blank") {
       const name = await ctx.ui.input("Context name", "events-db");
       if (!name) continue;
       const path = contextPath(name.trim());
@@ -752,7 +819,7 @@ async function manageContexts(pi: ExtensionAPI, ctx: ExtensionCommandContext): P
       }
       const title = name.trim().split("-").map((part) => part[0]?.toUpperCase() + part.slice(1)).join(" ");
       const template = `# ${title}\n\n## Current state\n\n## Decisions\n\n## Constraints\n\n## Open questions\n\n## References\n`;
-      const edited = await ctx.ui.editor(`Create context: ${name}`, template);
+      const edited = await ctx.ui.editor(`Create blank context: ${name}`, template);
       if (edited !== undefined) {
         await saveContext(name.trim(), edited);
         ctx.ui.notify(`Saved and verified ${path}`, "info");
@@ -1036,17 +1103,18 @@ export default function recallExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "recall_context",
     label: "Recall Context",
-    description: "List, show, attach, create, or naturally update a Recall context. Updating finds every affected statement, shows a focused diff, and asks the user to approve it within the same tool call.",
-    promptSnippet: "Manage and update reusable local context banks for the current Pi session",
+    description: "List, show, attach, naturally create, or naturally update a Recall context. Create and update both show a review UI and ask for approval within the same tool call.",
+    promptSnippet: "Create, manage, and update reusable local context banks",
     promptGuidelines: [
+      "Use recall_context with action create when the user naturally asks to create a new Recall context; pass what it should capture as instruction. Do not require session IDs.",
       "Use recall_context with action update when the user naturally asks to update, revise, correct, or refresh an existing Recall context; pass the user's exact update as instruction.",
       "Never use recall_context save_current to update an existing context; save_current regenerates the entire context from the current session and may replace curated content.",
       "Use recall_context save_current only when the user explicitly asks to create a context from the current Pi session; use attach for an existing context.",
     ],
     parameters: Type.Object({
-      action: StringEnum(["list", "show", "attach", "save_current", "update"] as const),
+      action: StringEnum(["list", "show", "attach", "create", "save_current", "update"] as const),
       name: Type.Optional(Type.String({ description: "Context name; required except for list" })),
-      instruction: Type.Optional(Type.String({ description: "The user's exact natural-language update; required for update" })),
+      instruction: Type.Optional(Type.String({ description: "The user's exact natural-language description for create or change for update" })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (params.action === "list") {
@@ -1054,6 +1122,16 @@ export default function recallExtension(pi: ExtensionAPI) {
         return { content: [{ type: "text", text: names.length ? names.join("\n") : "No recall contexts." }], details: { names } };
       }
       if (!params.name) throw new Error(`${params.action} requires a context name`);
+      if (params.action === "create") {
+        if (!params.instruction?.trim()) throw new Error("create requires what the context should capture");
+        const result = await createContextInteractively(ctx, params.name, params.instruction, signal);
+        const text = result.status === "created"
+          ? `Created and verified ${result.path}`
+          : result.status === "proposed"
+            ? `Proposed context (not created):\n\n${result.draft}`
+            : "Context creation cancelled; no file was written.";
+        return { content: [{ type: "text", text }], details: result };
+      }
       if (params.action === "save_current") {
         const path = await saveCurrentSessionContext(pi, ctx, params.name, signal);
         return { content: [{ type: "text", text: path ? `Saved and verified ${path}` : "Context creation cancelled." }], details: { path } };
