@@ -1,5 +1,9 @@
 import io
+import os
+import pty
+import select
 import sqlite3
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -247,6 +251,35 @@ class ContextBankTests(unittest.TestCase):
         with self.assertRaisesRegex(recall.ContextError, "changed while"):
             recall._write_context_update("project", original, original + "\nProposed.\n")
 
+    @unittest.skipUnless(os.name == "posix", "requires a pseudo-terminal")
+    def test_context_update_prompt_supports_shell_cursor_controls(self):
+        script = (
+            "import recall; "
+            "print(input('Describe what changed: '), flush=True)"
+        )
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execv(sys.executable, [sys.executable, "-c", script])
+        output = bytearray()
+        try:
+            while b"Describe what changed: " not in output:
+                ready, _, _ = select.select([fd], [], [], 2)
+                self.assertTrue(ready, "prompt did not appear")
+                output.extend(os.read(fd, 1024))
+            # Exercise Option/Alt-B word movement, Home, and Ctrl-A.
+            os.write(fd, b"hello world\x1bbnew \x1b[HStart \x01First \r")
+            while b"First Start hello new world" not in output:
+                ready, _, _ = select.select([fd], [], [], 2)
+                self.assertTrue(ready, "prompt did not finish")
+                output.extend(os.read(fd, 1024))
+        finally:
+            _, status = os.waitpid(pid, 0)
+            os.close(fd)
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0)
+        self.assertIn(b"First Start hello new world", output)
+        self.assertNotIn(b"^A", output)
+        self.assertNotIn(b"^[", output)
+
     def test_context_update_cli_is_one_operation(self):
         path = recall._context_create("project")
         original = path.read_text(encoding="utf-8")
@@ -259,6 +292,7 @@ class ContextBankTests(unittest.TestCase):
         with mock.patch.object(recall, "_run_pi_generation", return_value=response), redirect_stdout(out):
             recall.main(["context", "update", "project", "No open questions remain.", "--yes"])
 
+        self.assertIn("Generating a proposed update", out.getvalue())
         self.assertIn("updated and verified", out.getvalue())
         self.assertIn("- None.", path.read_text(encoding="utf-8"))
         self.assertEqual(recall._context_backup_path("project").read_text(encoding="utf-8"), original)

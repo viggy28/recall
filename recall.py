@@ -37,6 +37,39 @@ import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Importing readline enables normal shell-style editing for input(): arrows,
+# Ctrl-A/Ctrl-E, and word movement. It is optional on platforms without it.
+try:
+    import readline as _readline
+except ImportError:  # pragma: no cover - platform dependent
+    _readline = None
+else:
+    # macOS Python commonly uses libedit; other builds use GNU readline.
+    # Configure both syntaxes so common terminal sequences never print literally.
+    if "libedit" in (_readline.__doc__ or "").lower():
+        for binding in (
+            "bind ^A ed-move-to-beg",
+            "bind ^E ed-move-to-end",
+            'bind "^[b" ed-prev-word',
+            'bind "^[f" em-next-word',
+            'bind "^[[H" ed-move-to-beg',
+            'bind "^[[F" ed-move-to-end',
+            'bind "^[[1~" ed-move-to-beg',
+            'bind "^[[4~" ed-move-to-end',
+        ):
+            _readline.parse_and_bind(binding)
+    else:
+        for binding in (
+            "set editing-mode emacs",
+            '"\\e[H": beginning-of-line',
+            '"\\e[F": end-of-line',
+            '"\\e[1~": beginning-of-line',
+            '"\\e[4~": end-of-line',
+            '"\\eb": backward-word',
+            '"\\ef": forward-word',
+        ):
+            _readline.parse_and_bind(binding)
+
 # --------------------------------------------------------------------------- #
 # Config
 # --------------------------------------------------------------------------- #
@@ -1868,6 +1901,8 @@ def _context_update(args) -> Path | None:
         if args.replace:
             edits = [{"old_text": old, "new_text": new} for old, new in args.replace]
         else:
+            model = args.model or "Pi's configured model"
+            print(f"Generating a proposed update with {model}...", flush=True)
             response = _run_pi_generation(_context_update_prompt(args.name, original, instruction), args.model)
             edits = _parse_context_patch(response)
         updated = _apply_context_patch(original, edits)
