@@ -670,7 +670,10 @@ async function saveCurrentSessionContext(
   const path = contextPath(name);
   try {
     await stat(path);
-    if (!await ctx.ui.confirm("Replace context?", `${name} already exists.`)) return null;
+    if (!await ctx.ui.confirm(
+      "Overwrite entire context?",
+      `${name} already exists. This regenerates the whole file from the current Pi session; it does not merge an update. Use Update with instruction for a focused change.`,
+    )) return null;
   } catch (error: any) {
     if (error?.code !== "ENOENT") throw error;
   }
@@ -996,7 +999,8 @@ export default function recallExtension(pi: ExtensionAPI) {
     promptSnippet: "Manage and update reusable local context banks for the current Pi session",
     promptGuidelines: [
       "Use recall_context with action update when the user naturally asks to update, revise, correct, or refresh an existing Recall context; pass the user's exact update as instruction.",
-      "Use recall_context when the user asks to save the current Pi session as reusable context or attach an existing recall context.",
+      "Never use recall_context save_current to update an existing context; save_current regenerates the entire context from the current session and may replace curated content.",
+      "Use recall_context save_current only when the user explicitly asks to create a context from the current Pi session; use attach for an existing context.",
     ],
     parameters: Type.Object({
       action: StringEnum(["list", "show", "attach", "save_current", "update"] as const),
