@@ -153,8 +153,8 @@ Maintainer checklist:
 1. Merge conventional commits normally.
 2. Manually run the `Release Please` workflow when ready to prepare a release PR.
 3. Review and merge the generated Release Please PR when ready to ship.
-4. Watch the `Publish npm package` workflow in the `release` environment.
+4. Watch the `Publish npm package` workflow.
 5. Confirm the workflow's npm read-back verification succeeded.
 6. For urgent recovery, rerun `workflow_dispatch` against an existing release tag instead of publishing from a laptop.
 
-Configure npm trusted publishing for `recall-pi` to trust this repository's `publish-npm.yml` workflow and the `release` environment. If OIDC trusted publishing is unavailable, use a granular npm automation token scoped to the `release` environment only and rotate it after the recovery publish.
+Configure npm trusted publishing for `recall-pi` to trust this repository's `publish-npm.yml` workflow. If OIDC trusted publishing is unavailable, use a granular npm automation token as a temporary fallback and rotate it after the recovery publish.

@@ -3,6 +3,14 @@
   "version": "0.2.0",
   "type": "module",
   "description": "Local work memory for Pi over Claude Code, Pi, and Codex sessions",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/viggy28/recall.git"
+  },
+  "bugs": {
+    "url": "https://github.com/viggy28/recall/issues"
+  },
+  "homepage": "https://github.com/viggy28/recall#readme",
   "keywords": [
     "pi-package",
     "pi-extension",
