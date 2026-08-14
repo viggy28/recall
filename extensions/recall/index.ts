@@ -519,13 +519,24 @@ async function reviewContextText(
           const wrapped = wrapTextWithAnsi(line || " ", contentWidth);
           return wrapped.map((part) => color(part));
         });
-        // Use most of the terminal while leaving room for Pi's footer and review controls.
-        lastPageSize = Math.max(12, Math.min(48, tui.terminal.rows - 8));
+        // Use most of the terminal while leaving room for Pi's footer and the
+        // dedicated, potentially wrapped review controls below.
+        lastPageSize = Math.max(12, Math.min(48, tui.terminal.rows - 10));
         const maxScroll = Math.max(0, styled.length - lastPageSize);
         scroll = Math.min(scroll, maxScroll);
         const visible = styled.slice(scroll, scroll + lastPageSize).map((line) => ` ${line}`);
         if (styled.length > lastPageSize) visible.push(theme.fg("dim", ` ${scroll + 1}-${Math.min(scroll + lastPageSize, styled.length)} of ${styled.length}`));
-        visible.push(theme.fg("dim", " ↑↓ scroll  PgUp/PgDn page  [a] Apply  [r] Revise  [e] Full editor  [Esc] Cancel"));
+        visible.push(theme.fg("accent", ` ${"─".repeat(contentWidth)}`));
+        visible.push(theme.fg("muted", " ↑↓ scroll  PgUp/PgDn page"));
+        const action = (key: string, label: string, color: "accent" | "warning") =>
+          `${theme.fg(color, theme.bold(`[${key}]`))} ${theme.fg("text", theme.bold(label))}`;
+        const actions = [
+          action("a", "Apply", "accent"),
+          action("r", "Revise", "accent"),
+          action("e", "Full editor", "accent"),
+          action("Esc", "Cancel", "warning"),
+        ].join("   ");
+        visible.push(...wrapTextWithAnsi(actions, contentWidth).map((line) => ` ${line}`));
         return visible;
       },
       handleInput(data: string) {
