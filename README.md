@@ -144,16 +144,17 @@ python3 -m unittest -v
 
 ## Release cadence and deployment
 
-Normal changes merge to `main` without publishing immediately. Use conventional commits (`feat:`, `fix:`, etc.); Release Please keeps a reviewable release PR open with the next version, changelog, and synchronized `package.json` / `pyproject.toml` updates. Merge that release PR when you want to cut a release, typically after a small batch of user-visible fixes or immediately for an urgent fix.
+Normal changes merge to `main` without publishing immediately. Use conventional commits (`feat:`, `fix:`, etc.); when you are ready to prepare a release, manually run the `Release Please` workflow. It opens or updates a reviewable release PR with the next version, changelog, and synchronized `package.json` / `pyproject.toml` updates. Merge that release PR when you want to cut a release, typically after a small batch of user-visible fixes or immediately for an urgent fix.
 
 Merging the release PR creates a GitHub release and tag. The npm publish workflow runs only for that release tag (or by `workflow_dispatch` against an existing tag), reruns tests/type checking/package inspection, publishes `recall-pi` from the checked-out tag, then reads npm back and verifies the version, integrity, tarball URL, and required files.
 
 Maintainer checklist:
 
 1. Merge conventional commits normally.
-2. Review and merge the generated Release Please PR when ready to ship.
-3. Watch the `Publish npm package` workflow in the `release` environment.
-4. Confirm the workflow's npm read-back verification succeeded.
-5. For urgent recovery, rerun `workflow_dispatch` against an existing release tag instead of publishing from a laptop.
+2. Manually run the `Release Please` workflow when ready to prepare a release PR.
+3. Review and merge the generated Release Please PR when ready to ship.
+4. Watch the `Publish npm package` workflow in the `release` environment.
+5. Confirm the workflow's npm read-back verification succeeded.
+6. For urgent recovery, rerun `workflow_dispatch` against an existing release tag instead of publishing from a laptop.
 
 Configure npm trusted publishing for `recall-pi` to trust this repository's `publish-npm.yml` workflow and the `release` environment. If OIDC trusted publishing is unavailable, use a granular npm automation token scoped to the `release` environment only and rotate it after the recovery publish.
