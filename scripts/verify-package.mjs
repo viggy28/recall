@@ -13,7 +13,7 @@ const required = [
 const mode = process.argv[2] ?? 'dry-run';
 const args = mode === 'pack' ? ['pack', '--json'] : ['pack', '--dry-run', '--json'];
 const parsed = JSON.parse(execFileSync('npm', args, { encoding: 'utf8' }));
-const entry = Array.isArray(parsed) ? parsed[0] : parsed;
+const entry = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
 const files = new Set((entry.files ?? []).map((file) => file.path));
 const missing = required.filter((file) => !files.has(file));
 if (missing.length > 0) {

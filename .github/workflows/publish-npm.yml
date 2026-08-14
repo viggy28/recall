@@ -48,7 +48,7 @@ jobs:
 
       - name: Use npm with trusted publishing support
         run: |
-          npm install --global npm@latest
+          npm install --global npm@11.6.2
           npm --version
 
       - name: Run Python tests
