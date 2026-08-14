@@ -1,6 +1,8 @@
 import io
+import json
 import os
 import pty
+import re
 import select
 import sqlite3
 import sys
@@ -12,6 +14,16 @@ from types import SimpleNamespace
 from unittest import mock
 
 import recall
+
+
+class ReleaseManifestTests(unittest.TestCase):
+    def test_package_versions_stay_synchronized(self):
+        package_version = json.loads(Path("package.json").read_text(encoding="utf-8"))["version"]
+        pyproject_text = Path("pyproject.toml").read_text(encoding="utf-8")
+        pyproject_match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject_text, re.M)
+
+        self.assertIsNotNone(pyproject_match)
+        self.assertEqual(package_version, pyproject_match.group(1))
 
 
 class TuiPresentationTests(unittest.TestCase):
