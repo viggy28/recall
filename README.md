@@ -4,6 +4,16 @@
 
 Core fuzzy/regex search and indexing use only the Python standard library. Semantic search is optional and local-only via `fastembed` and `numpy`.
 
+![Animated walkthrough of recall CLI search, Pi extension tools, and context banks](docs/recall-demo.gif)
+
+## Choose your workflow
+
+| Use case | Best path | Notes |
+| --- | --- | --- |
+| Search from any terminal | Standalone CLI | No install required for fuzzy/regex search; optional editable install gives you the `recall` command. |
+| Search while working in Pi | Pi extension | Adds `/recall` plus `recall_search` and `recall_context` tools inside Pi. |
+| Keep reusable project memory | Context banks | Markdown files live locally and can be created, updated, attached, imported, or exported. |
+
 ## What it indexes
 
 - Claude Code transcripts under `~/.claude/projects`
@@ -37,6 +47,8 @@ pip install -e .
 recall --help
 ```
 
+Update an editable install with `git pull` in the checkout. If you installed from a package archive, reinstall the newer package into the same virtual environment.
+
 ### Optional semantic search dependencies
 
 Semantic search/indexing requires `fastembed` and `numpy`. Install them with the `semantic` extra:
@@ -67,6 +79,13 @@ semantic = ["fastembed", "numpy"]
 
 This package includes a Pi extension at `extensions/recall/index.ts`.
 
+Install or update the Pi package from this checkout:
+
+```bash
+pi extension install /path/to/recall
+pi extension update recall
+```
+
 It provides:
 
 - `/recall` — interactive dashboard for search, recent sessions, contexts, and maintenance
@@ -92,6 +111,15 @@ Or point Pi at another Python environment:
 
 ```bash
 export RECALL_PYTHON=/absolute/path/to/venv/bin/python
+```
+
+In Pi, you can ask naturally:
+
+```text
+Search my recent sessions for the retry backoff change.
+Create an events-db context that tracks decisions and open questions.
+Attach the events-db context before we continue the migration.
+Update my events-db context with the production rollout notes.
 ```
 
 ## CLI usage
@@ -133,6 +161,12 @@ recall context generate events-db --session <session-id-prefix>
 ```
 
 `context create` and `context update` use natural-language descriptions, show a focused preview, and offer Apply, Revise, Full editor, or Cancel in the same command. Use `create --blank` for the old empty template; creation no longer requires session IDs. For model-free update scripts, repeat `--replace OLD NEW`. In Pi, ask naturally (for example, “Create an events-db context that tracks…” or “Update my events-db context: …”); the `recall_context` tool runs the same review and approval flow without a separate apply step.
+
+Context files are stored as plain Markdown under `~/.recall/contexts/`. Previous versions are kept under `~/.recall/context-history/`, and the SQLite search index stays in `~/.recall/recall.db`.
+
+## Privacy
+
+`recall` reads local transcript files and writes a local SQLite index. Core indexing, fuzzy search, regex search, and context-bank management do not send transcript content over the network. Optional semantic search downloads and runs the configured embedding model locally through `fastembed`; embeddings are stored in the local database.
 
 ## Development
 
