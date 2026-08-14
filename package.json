@@ -1,6 +1,6 @@
 {
   "name": "recall-pi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Local work memory for Pi over Claude Code, Pi, and Codex sessions",
   "keywords": [
