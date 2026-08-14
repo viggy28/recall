@@ -4,7 +4,7 @@
 
 Core fuzzy/regex search and indexing use only the Python standard library. Semantic search is optional and local-only via `fastembed` and `numpy`.
 
-![Animated walkthrough of recall CLI search, Pi extension tools, and context banks](docs/recall-demo.gif)
+![Animated walkthrough of recall CLI search, semantic search, Pi extension tools, and context banks](docs/recall-demo.gif)
 
 ## Choose your workflow
 
@@ -175,6 +175,14 @@ Run the test suite with:
 ```bash
 python3 -m unittest -v
 ```
+
+Regenerate the README demo GIF with [VHS](https://github.com/charmbracelet/vhs):
+
+```bash
+vhs docs/recall-demo.tape
+```
+
+The tape uses `docs/recall-demo-fixtures.sh` for deterministic output, so it does not depend on your local transcript history.
 
 ## Release cadence and deployment
 
