@@ -1,51 +1,59 @@
+# Recall Demo — recorded from the local CLI
+# Install: brew install vhs
+# Record:  vhs docs/recall-demo.tape
+#
+# Prerequisites:
+#   - Run from the recall repository checkout.
+#   - .venv exists and has recall installed.
+#   - For semantic search: pip install -e ".[semantic]" && recall index --semantic
+
 Output docs/recall-demo.gif
 
-Require bash
-
 Set Shell "bash"
-Set FontSize 26
-Set FontFamily "JetBrains Mono"
-Set Width 1200
-Set Height 675
-Set Padding 28
+Set FontSize 16
+Set Width 1800
+Set Height 700
+Set Padding 10
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 18ms
-Set PlaybackSpeed 1.25
-Set Framerate 20
-Set WindowBar Colorful
+Set TypingSpeed 30ms
 
 Hide
 Type "cd /Users/viggy28/source/github/viggy28/recall"
 Enter
-Type "source docs/recall-demo-fixtures.sh"
+Sleep 300ms
+Type "export PATH=/opt/homebrew/bin:$PATH"
 Enter
+Sleep 300ms
+Type "export PS1='viggy@mac recall % '"
+Enter
+Sleep 300ms
 Ctrl+L
 Show
 
-Type "recall index --stats"
+Type "./.venv/bin/recall index --stats"
 Enter
-Sleep 1.2s
+Sleep 1.5s
 
-Type "recall search migration safe not safe --limit 3"
+Type "./.venv/bin/recall search 'migration safe not safe' --limit 3 --no-index"
 Enter
-Sleep 2s
-
-Ctrl+L
-Type "recall search --semantic local memory tool for coding agent sessions --limit 3"
-Enter
-Sleep 2s
+Sleep 3s
 
 Ctrl+L
-Type "recall context list"
+Type "./.venv/bin/recall search --semantic 'local memory tool for coding agent sessions' --limit 3 --no-index"
 Enter
-Sleep 900ms
-Type "recall context show recall"
-Enter
-Sleep 2s
+Sleep 3s
 
 Ctrl+L
-Type "pi install npm:recall-pi"
+Type "./.venv/bin/recall context list"
 Enter
 Sleep 1s
-Type "/recall  # search sessions, attach contexts, update memory inside Pi"
+Type "./.venv/bin/recall context show recall"
+Enter
+Sleep 3s
+
+Ctrl+L
+Type "npm view recall-pi version description"
+Enter
+Sleep 1.5s
+Type "# Pi extension: /recall, recall_search, recall_context"
 Sleep 2s

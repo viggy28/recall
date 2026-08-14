@@ -25,7 +25,6 @@
     "extensions/recall/index.ts",
     "docs/recall-demo.gif",
     "docs/recall-demo.tape",
-    "docs/recall-demo-fixtures.sh",
     "README.md"
   ],
   "pi": {

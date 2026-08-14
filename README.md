@@ -182,7 +182,14 @@ Regenerate the README demo GIF with [VHS](https://github.com/charmbracelet/vhs):
 vhs docs/recall-demo.tape
 ```
 
-The tape uses `docs/recall-demo-fixtures.sh` for deterministic output, so it does not depend on your local transcript history.
+The tape runs real `recall` commands from this checkout. For the semantic-search segment, install the optional dependencies and build embeddings first:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[semantic]"
+recall index --semantic
+```
 
 ## Release cadence and deployment
 
