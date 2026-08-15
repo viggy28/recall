@@ -417,7 +417,7 @@ function changedContextLines(oldText: string, newText: string): { removed: strin
   };
 }
 
-function focusedContextDiff(edits: ContextEdit[]): string {
+function focusedContextDiff(name: string, edits: ContextEdit[]): string {
   const blocks = edits.map((edit, index) => {
     const changed = changedContextLines(edit.old_text, edit.new_text);
     const lines = [`@@ change ${index + 1} @@`];
@@ -426,7 +426,34 @@ function focusedContextDiff(edits: ContextEdit[]): string {
     if (changed.added.length === 0) lines.push("+ (deleted)");
     return lines.join("\n");
   });
-  return blocks.join("\n\n");
+  return [`--- ${name} (current)`, `+++ ${name} (proposed)`, ...blocks].join("\n");
+}
+
+function unifiedContextDiff(name: string, original: string, updated: string): string {
+  const oldLines = original.split("\n");
+  const newLines = updated.split("\n");
+  let prefix = 0;
+  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
+  let suffix = 0;
+  while (
+    suffix < oldLines.length - prefix
+    && suffix < newLines.length - prefix
+    && oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
+  ) suffix++;
+  const removed = oldLines.slice(prefix, oldLines.length - suffix);
+  const added = newLines.slice(prefix, newLines.length - suffix);
+  if (removed.length === 0 && added.length === 0) return "(no changes)";
+  const oldStart = prefix + 1;
+  const newStart = prefix + 1;
+  const oldRange = removed.length === 1 ? String(oldStart) : `${oldStart},${removed.length}`;
+  const newRange = added.length === 1 ? String(newStart) : `${newStart},${added.length}`;
+  return [
+    `--- ${name} (current)`,
+    `+++ ${name} (proposed)`,
+    `@@ -${oldRange} +${newRange} @@`,
+    ...removed.filter((line) => line.length > 0).map((line) => `- ${line}`),
+    ...added.filter((line) => line.length > 0).map((line) => `+ ${line}`),
+  ].join("\n");
 }
 
 function contextUpdatePrompt(name: string, original: string, instruction: string): string {
@@ -482,7 +509,7 @@ async function proposeContextUpdate(
         .map((block) => block.text).join("\n");
       const edits = parseContextPatch(text);
       const updated = applyContextPatch(original, edits);
-      return { updated, edits, diff: focusedContextDiff(edits) };
+      return { updated, edits, diff: focusedContextDiff(name, edits) };
     })().then(done).catch((error) => {
       console.error("Recall context update proposal failed:", error);
       ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
@@ -789,23 +816,38 @@ async function saveCurrentSessionContext(
   if (!entered) return null;
   const name = entered.trim();
   const path = contextPath(name);
+  let original: string | null = null;
   try {
-    await stat(path);
+    original = await readFile(path, "utf8");
     if (!await ctx.ui.confirm(
-      "Overwrite entire context?",
-      `${name} already exists. This regenerates the whole file from the current Pi session; it does not merge an update. Use Update with instruction for a focused change.`,
+      "Regenerate existing context?",
+      `${name} already exists. Recall will show a diff and will not overwrite it until you apply the reviewed changes. Use Update with instruction for a focused merge instead.`,
     )) return null;
   } catch (error: any) {
     if (error?.code !== "ENOENT") throw error;
   }
   const generated = await generateContextDraft(ctx, name, signal);
   if (!generated) return null;
-  const edited = await ctx.ui.editor(`Review context: ${name}`, generated);
-  if (edited === undefined) return null;
-  await saveContext(name, edited);
+
+  let finalText = generated;
+  if (original === null) {
+    const edited = await ctx.ui.editor(`Review context: ${name}`, generated);
+    if (edited === undefined) return null;
+    finalText = edited;
+    await saveContext(name, finalText);
+  } else {
+    while (true) {
+      const action = await reviewContextText(ctx, `Regenerate ${name}`, unifiedContextDiff(name, original, finalText));
+      if (action === "cancel") return null;
+      if (action === "apply") break;
+      const edited = await ctx.ui.editor(`Edit proposed ${name}`, finalText);
+      if (edited !== undefined) finalText = edited;
+    }
+    await applyContextUpdate(name, original, finalText);
+  }
   ctx.ui.notify(`Saved and verified ${path}`, "info");
   if (await ctx.ui.confirm("Attach context?", `Attach ${name} to this Pi session now?`)) {
-    attachContext(pi, name, edited, !ctx.isIdle());
+    attachContext(pi, name, finalText, !ctx.isIdle());
   }
   return path;
 }
