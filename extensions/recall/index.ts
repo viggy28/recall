@@ -532,7 +532,7 @@ async function reviewContextText(
     let lastPageSize = 22;
     return {
       render(width: number) {
-        const contentWidth = Math.max(12, width - 2);
+        const contentWidth = Math.max(1, width - 2);
         const styled = rawLines.flatMap((line, index) => {
           const color = index === 0 || (markdown && line.startsWith("#"))
             ? (part: string) => theme.fg("accent", theme.bold(part))
@@ -547,23 +547,35 @@ async function reviewContextText(
           return wrapped.map((part) => color(part));
         });
         // Use most of the terminal while leaving room for Pi's footer and the
-        // dedicated, potentially wrapped review controls below.
-        lastPageSize = Math.max(12, Math.min(48, tui.terminal.rows - 10));
+        // dedicated review action box below.
+        lastPageSize = Math.max(12, Math.min(48, tui.terminal.rows - 12));
         const maxScroll = Math.max(0, styled.length - lastPageSize);
         scroll = Math.min(scroll, maxScroll);
         const visible = styled.slice(scroll, scroll + lastPageSize).map((line) => ` ${line}`);
-        if (styled.length > lastPageSize) visible.push(theme.fg("dim", ` ${scroll + 1}-${Math.min(scroll + lastPageSize, styled.length)} of ${styled.length}`));
-        visible.push(theme.fg("accent", ` ${"─".repeat(contentWidth)}`));
-        visible.push(theme.fg("muted", " ↑↓ scroll  PgUp/PgDn page"));
-        const action = (key: string, label: string, color: "accent" | "warning") =>
-          `${theme.fg(color, theme.bold(`[${key}]`))} ${theme.fg("text", theme.bold(label))}`;
+        const boxWidth = Math.max(4, width - 2);
+        const innerWidth = Math.max(2, boxWidth - 2);
+        const border = (left: string, fill: string, right: string) =>
+          ` ${theme.fg("accent", left + fill.repeat(innerWidth) + right)}`;
+        const boxed = (line: string) =>
+          ` ${theme.fg("accent", "│")}${padToWidth(line, innerWidth)}${theme.fg("accent", "│")}`;
+        const keycap = (key: string, color: "success" | "accent" | "warning") =>
+          theme.bg("selectedBg", theme.fg(color, theme.bold(` ${key} `)));
+        const action = (key: string, label: string, color: "success" | "accent" | "warning") =>
+          `${keycap(key, color)} ${theme.fg("text", theme.bold(label))}`;
+        const scrollInfo = styled.length > lastPageSize
+          ? `${scroll + 1}-${Math.min(scroll + lastPageSize, styled.length)} of ${styled.length}  ·  `
+          : "";
+        visible.push(border("╭", "─", "╮"));
+        visible.push(boxed(` ${theme.fg("accent", theme.bold("Review actions"))}  ${theme.fg("muted", `${scrollInfo}↑↓ scroll  PgUp/PgDn page`)}`));
         const actions = [
-          action("a", "Apply", "accent"),
-          action("r", "Revise", "accent"),
-          action("e", "Full editor", "accent"),
+          action("A", "Apply", "success"),
+          action("Enter", "Apply", "success"),
+          action("R", "Revise", "accent"),
+          action("E", "Full editor", "accent"),
           action("Esc", "Cancel", "warning"),
-        ].join("   ");
-        visible.push(...wrapTextWithAnsi(actions, contentWidth).map((line) => ` ${line}`));
+        ].join(theme.fg("dim", "   "));
+        visible.push(...wrapTextWithAnsi(actions, Math.max(8, innerWidth - 2)).map((line) => boxed(` ${line}`)));
+        visible.push(border("╰", "─", "╯"));
         return visible;
       },
       handleInput(data: string) {
