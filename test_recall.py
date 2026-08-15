@@ -511,6 +511,14 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         self.assertIs(recall.PiSource, ingestion.PiSource)
         self.assertIs(recall.CodexSource, ingestion.CodexSource)
 
+    def test_public_facade_exports_semantic_config(self):
+        from recall_core import ingestion
+
+        self.assertEqual(recall.EMBED_MODEL, ingestion.EMBED_MODEL)
+        self.assertEqual(recall.CHUNK_MAX, ingestion.CHUNK_MAX)
+        self.assertEqual(recall.CHUNK_TARGET, ingestion.CHUNK_TARGET)
+        self.assertGreater(len(list(recall._chunk("x" * (ingestion.CHUNK_MAX + 1)))), 1)
+
     def test_public_facade_exports_index_and_retrieval_functions(self):
         from recall_core import indexing, retrieval
 

@@ -294,4 +294,3 @@ def search_regex(conn, args):
         d["score"] = -r["epoch"] if r["epoch"] else 0
         out.append(d)
     return out
-

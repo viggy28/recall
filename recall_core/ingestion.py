@@ -354,4 +354,3 @@ class CodexSource(Source):
             q = (p.get("action") or {}).get("query", "")
             return (f"[tool: web_search] {q}", "", "tool", pt) if q else None
         return None                # reasoning (encrypted), tool_search_call, etc.
-

@@ -203,5 +203,3 @@ def index(conn, source=None, full=False, purge_missing=False, quiet=False):
         print(f"  {source.name}: {len(disk)} files (+{total_added} messages, "
               f"{len(missing)} missing{'→purged' if purge_missing else '→archived'})")
     return total_added
-
-

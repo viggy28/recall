@@ -87,8 +87,9 @@ TUI_MIN_QUERY_CHARS = 2
 
 
 from recall_core.ingestion import (
-    ClaudeCodeSource, CodexSource, PiSource, Source, _cap, _codex_root,
-    _codex_text, _epoch, _flatten_content, _nl_content, _pi_flatten, _pi_root,
+    CHUNK_MAX, CHUNK_TARGET, EMBED_MODEL, ClaudeCodeSource, CodexSource,
+    PiSource, Source, _cap, _codex_root, _codex_text, _epoch,
+    _flatten_content, _nl_content, _pi_flatten, _pi_root,
 )
 
 

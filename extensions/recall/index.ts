@@ -400,9 +400,13 @@ function applyContextPatch(original: string, edits: ContextEdit[]): string {
   return updated;
 }
 
+function contextLines(text: string): string[] {
+  return text.length === 0 ? [] : text.split("\n");
+}
+
 function changedContextLines(oldText: string, newText: string): { removed: string[]; added: string[] } {
-  const oldLines = oldText.split("\n");
-  const newLines = newText.split("\n");
+  const oldLines = contextLines(oldText);
+  const newLines = contextLines(newText);
   let prefix = 0;
   while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
   let suffix = 0;
@@ -417,21 +421,26 @@ function changedContextLines(oldText: string, newText: string): { removed: strin
   };
 }
 
+function formatDiffLines(prefix: "-" | "+", lines: string[]): string[] {
+  return lines.map((line) => `${prefix} ${line}`);
+}
+
 function focusedContextDiff(name: string, edits: ContextEdit[]): string {
   const blocks = edits.map((edit, index) => {
     const changed = changedContextLines(edit.old_text, edit.new_text);
     const lines = [`@@ change ${index + 1} @@`];
-    lines.push(...changed.removed.filter(Boolean).map((line) => `- ${line}`));
-    lines.push(...changed.added.filter(Boolean).map((line) => `+ ${line}`));
-    if (changed.added.length === 0) lines.push("+ (deleted)");
+    const added = edit.new_text.length === 0 ? [] : changed.added;
+    lines.push(...formatDiffLines("-", changed.removed));
+    lines.push(...formatDiffLines("+", added));
+    if (edit.new_text.length === 0) lines.push("+ (deleted)");
     return lines.join("\n");
   });
   return [`--- ${name} (current)`, `+++ ${name} (proposed)`, ...blocks].join("\n");
 }
 
 function unifiedContextDiff(name: string, original: string, updated: string): string {
-  const oldLines = original.split("\n");
-  const newLines = updated.split("\n");
+  const oldLines = contextLines(original);
+  const newLines = contextLines(updated);
   let prefix = 0;
   while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
   let suffix = 0;
@@ -451,8 +460,8 @@ function unifiedContextDiff(name: string, original: string, updated: string): st
     `--- ${name} (current)`,
     `+++ ${name} (proposed)`,
     `@@ -${oldRange} +${newRange} @@`,
-    ...removed.filter((line) => line.length > 0).map((line) => `- ${line}`),
-    ...added.filter((line) => line.length > 0).map((line) => `+ ${line}`),
+    ...formatDiffLines("-", removed),
+    ...formatDiffLines("+", added),
   ].join("\n");
 }
 

@@ -12,6 +12,10 @@ if (!version || !expectedIntegrity) {
 
 const required = [
   'package/recall.py',
+  'package/recall_core/__init__.py',
+  'package/recall_core/ingestion.py',
+  'package/recall_core/indexing.py',
+  'package/recall_core/retrieval.py',
   'package/pyproject.toml',
   'package/requirements-semantic.txt',
   'package/extensions/recall/index.ts',
