@@ -35,3 +35,4 @@ recall = "recall:main"
 
 [tool.setuptools]
 py-modules = ["recall"]
+packages = ["recall_core"]

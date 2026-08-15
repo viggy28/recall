@@ -2,8 +2,21 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
-const required = [
+const requiredFiles = [
   'recall.py',
+  'recall_core/__init__.py',
+  'recall_core/ingestion.py',
+  'recall_core/indexing.py',
+  'recall_core/retrieval.py',
+  'pyproject.toml',
+  'requirements-semantic.txt',
+  'extensions/recall/index.ts',
+  'README.md',
+];
+
+const requiredDeclarations = [
+  'recall.py',
+  'recall_core/**/*.py',
   'pyproject.toml',
   'requirements-semantic.txt',
   'extensions/recall/index.ts',
@@ -15,14 +28,14 @@ const args = mode === 'pack' ? ['pack', '--json'] : ['pack', '--dry-run', '--jso
 const parsed = JSON.parse(execFileSync('npm', args, { encoding: 'utf8' }));
 const entry = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
 const files = new Set((entry.files ?? []).map((file) => file.path));
-const missing = required.filter((file) => !files.has(file));
+const missing = requiredFiles.filter((file) => !files.has(file));
 if (missing.length > 0) {
   throw new Error(`npm package is missing required files: ${missing.join(', ')}`);
 }
 
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'));
 const declared = new Set(pkg.files ?? []);
-const undeclared = required.filter((file) => !declared.has(file));
+const undeclared = requiredDeclarations.filter((file) => !declared.has(file));
 if (undeclared.length > 0) {
   throw new Error(`package.json files does not declare: ${undeclared.join(', ')}`);
 }
