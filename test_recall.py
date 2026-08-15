@@ -502,6 +502,23 @@ class ContextBankTests(unittest.TestCase):
         self.assertFalse(prompt_path.exists())
 
 
+class CoreModuleBoundaryTests(unittest.TestCase):
+    def test_public_facade_exports_ingestion_types(self):
+        from recall_core import ingestion
+
+        self.assertIs(recall.Source, ingestion.Source)
+        self.assertIs(recall.ClaudeCodeSource, ingestion.ClaudeCodeSource)
+        self.assertIs(recall.PiSource, ingestion.PiSource)
+        self.assertIs(recall.CodexSource, ingestion.CodexSource)
+
+    def test_public_facade_exports_index_and_retrieval_functions(self):
+        from recall_core import indexing, retrieval
+
+        self.assertIs(recall.connect, indexing.connect)
+        self.assertIs(recall.init_db, indexing.init_db)
+        self.assertIs(recall.index, indexing.index)
+        self.assertIs(recall.search_fuzzy, retrieval.search_fuzzy)
+        self.assertIs(recall.search_regex, retrieval.search_regex)
+
 if __name__ == "__main__":
     unittest.main()
-

@@ -207,3 +207,20 @@ Maintainer checklist:
 6. For urgent recovery, rerun `workflow_dispatch` against an existing release tag instead of publishing from a laptop.
 
 Configure npm trusted publishing for `recall-pi` to trust this repository's `publish-npm.yml` workflow. If OIDC trusted publishing is unavailable, use a granular npm automation token as a temporary fallback and rotate it after the recovery publish.
+
+## Architecture
+
+Recall's backend keeps the `recall.py` module and CLI as its compatibility
+facade, while the data lifecycle is separated into focused modules:
+
+- `recall_core.ingestion` discovers Claude Code, Pi, and Codex transcripts and
+  normalizes their records into a shared message shape.
+- `recall_core.indexing` owns the SQLite schema, connections, and incremental
+  persistence of normalized messages.
+- `recall_core.retrieval` owns query filters, fuzzy and regular-expression
+  search, ranking, and match-preview formatting.
+
+Semantic embedding and the CLI/TUI orchestration currently remain in the facade.
+Moving those behind the subsystem APIs is intentionally left as follow-up work;
+keeping them in place avoids changing optional-dependency loading and the public
+module surface during this structural refactor.
