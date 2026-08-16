@@ -1,6 +1,6 @@
 # Recall
 
-**A local knowledge base built from your Claude Code, Codex, and Pi conversations.**
+**A local knowledge base built from your Claude Code, Codex, OpenCode, and Pi conversations.**
 
 Recall indexes your coding-agent sessions in SQLite so you can rediscover past work, resume sessions, and preserve important context in plain Markdown. Everything stays on your machine.
 
@@ -8,7 +8,7 @@ Recall indexes your coding-agent sessions in SQLite so you can rediscover past w
 
 ## What Recall does
 
-- Indexes conversations across Claude Code, Codex, and Pi.
+- Indexes conversations across Claude Code, Codex, OpenCode, and Pi.
 - Searches with fuzzy matching, regular expressions, or optional local semantic search.
 - Browses recent conversations and resumes supported sessions.
 - Preserves reusable project context as plain Markdown context banks.

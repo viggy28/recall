@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """recall — a local knowledge base built from coding-agent conversations.
 
-Indexes JSONL transcripts from multiple harnesses (Claude Code under
-~/.claude/projects, Pi under ~/.pi/agent/sessions) into one local SQLite
-database and searches them three ways:
+Indexes transcripts from multiple harnesses (Claude Code, Codex, OpenCode,
+and Pi) into one local SQLite database and searches them three ways:
 
   fuzzy     (default)  forgiving keyword recall  — FTS5 porter + trigram (+ optional typo)
   regex     (-e)       exact pattern matching    — Python re registered as SQLite REGEXP
@@ -12,7 +11,7 @@ database and searches them three ways:
 Core (fuzzy + regex + indexing) is pure Python stdlib: zero pip, zero network.
 Semantic is opt-in and only needs `pip install fastembed numpy`; nothing ever
 leaves the machine. Results map back to the right resume command per harness
-(`claude --resume …` or `pi --session …`).
+(`claude --resume …`, `opencode --session …`, and their equivalents).
 
 Ingestion sits behind a small Source abstraction so more harnesses (Codex,
 Claude Desktop, …) can be added later without touching the index/search layers.
@@ -88,7 +87,7 @@ TUI_MIN_QUERY_CHARS = 2
 
 from recall_core.ingestion import (
     CHUNK_MAX, CHUNK_TARGET, EMBED_MODEL, ClaudeCodeSource, CodexSource,
-    PiSource, Source, _cap, _codex_root, _codex_text, _epoch,
+    OpenCodeSource, PiSource, Source, _cap, _codex_root, _codex_text, _epoch,
     _flatten_content, _nl_content, _pi_flatten, _pi_root,
 )
 
@@ -625,7 +624,7 @@ _TAG = {  # resume_status → (project tag, legend line)
 }
 
 
-_SRC_LABEL = {"claude-code": "claude", "pi": "pi", "codex": "codex"}
+_SRC_LABEL = {"claude-code": "claude", "pi": "pi", "codex": "codex", "opencode": "opencode"}
 
 
 def _src_label(source) -> str:
@@ -780,15 +779,17 @@ def _resume(sid, status, path, source="claude-code", resume_arg=None,
             label="", print_only=False):
     """Resume a session, or explain why it can't be. Shared by `recall go` and the TUI.
 
-    The resume command is source-specific: Claude → `claude --resume <id>`
-    (dir-scoped); Pi → `pi --session <transcript-path>` (path-based, so it
-    resolves the exact session regardless of cwd)."""
+    The resume command is source-specific: Claude → `claude --resume <id>`,
+    OpenCode → `opencode --session <id>`, and Pi → `pi --session
+    <transcript-path>` (path-based, so it resolves the exact session)."""
     pre = f"{label} " if label else ""
     resume_arg = resume_arg or sid
     if source == "pi":
         argv = ["pi", "--session", resume_arg]
     elif source == "codex":
         argv = ["codex", "resume", resume_arg]
+    elif source == "opencode":
+        argv = ["opencode", "--session", resume_arg]
     else:
         argv = ["claude", "--resume", resume_arg]
     if status == "archived":
@@ -2016,7 +2017,7 @@ def _add_search_flags(p):
     mode.add_argument("-s", "--semantic", action="store_true", help="semantic (meaning) mode")
     p.add_argument("--typo", action="store_true", help="fuzzy: tolerate typos (edit-distance)")
     p.add_argument("--project", help="filter: project path substring")
-    p.add_argument("--source", choices=["claude", "pi", "codex"], help="filter: harness")
+    p.add_argument("--source", choices=["claude", "pi", "codex", "opencode"], help="filter: harness")
     p.add_argument("--role", choices=["user", "assistant"], help="filter: message role")
     p.add_argument("--since", help="filter: on/after YYYY-MM-DD")
     p.add_argument("--until", help="filter: on/before YYYY-MM-DD")
@@ -2059,7 +2060,7 @@ def main(argv=None):
     tmode.add_argument("-s", "--semantic", action="store_true", help="start in semantic mode")
     pt.add_argument("--typo", action="store_true", help="fuzzy: tolerate typos")
     pt.add_argument("--project", help="filter: project path substring")
-    pt.add_argument("--source", choices=["claude", "pi", "codex"], help="filter: harness")
+    pt.add_argument("--source", choices=["claude", "pi", "codex", "opencode"], help="filter: harness")
     pt.add_argument("--role", choices=["user", "assistant"], help="filter: message role")
     pt.add_argument("--since", help="filter: on/after YYYY-MM-DD")
     pt.add_argument("--until", help="filter: on/before YYYY-MM-DD")
@@ -2212,4 +2213,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
-

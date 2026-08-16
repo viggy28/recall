@@ -2,7 +2,7 @@
   "name": "recall-pi",
   "version": "0.2.0",
   "type": "module",
-  "description": "A local knowledge base built from Claude Code, Codex, and Pi conversations",
+  "description": "A local knowledge base built from Claude Code, Codex, OpenCode, and Pi conversations",
   "repository": {
     "type": "git",
     "url": "https://github.com/viggy28/recall"
@@ -15,7 +15,8 @@
     "pi-package",
     "pi-extension",
     "session-search",
-    "recall"
+    "recall",
+    "opencode"
   ],
   "license": "MIT",
   "files": [

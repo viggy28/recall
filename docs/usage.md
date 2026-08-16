@@ -7,6 +7,7 @@ Recall can run as a standalone Python CLI or as an extension inside Pi. Both mod
 - Claude Code transcripts under `~/.claude/projects`
 - Pi sessions under `~/.pi/agent/sessions` or `PI_CODING_AGENT_SESSION_DIR`
 - Codex sessions under `$CODEX_HOME/sessions` or `~/.codex/sessions`
+- OpenCode sessions in `$OPENCODE_DB` or `$XDG_DATA_HOME/opencode/opencode.db` (normally `~/.local/share/opencode/opencode.db`)
 
 Local state is stored at:
 
@@ -52,6 +53,7 @@ Search can filter by source, project, role, date range, and result limit. It als
 
 ```bash
 recall search "migration plan" --source pi --project recall --role user --limit 20 --json
+recall search "retry backoff" --source opencode
 ```
 
 If you have not installed the package, replace `recall` with `python3 recall.py` in these commands.
