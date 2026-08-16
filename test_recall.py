@@ -510,6 +510,7 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         self.assertIs(recall.ClaudeCodeSource, ingestion.ClaudeCodeSource)
         self.assertIs(recall.PiSource, ingestion.PiSource)
         self.assertIs(recall.CodexSource, ingestion.CodexSource)
+        self.assertIs(recall.OpenCodeSource, ingestion.OpenCodeSource)
 
     def test_public_facade_exports_semantic_config(self):
         from recall_core import ingestion
@@ -527,6 +528,56 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         self.assertIs(recall.index, indexing.index)
         self.assertIs(recall.search_fuzzy, retrieval.search_fuzzy)
         self.assertIs(recall.search_regex, retrieval.search_regex)
+
+
+class OpenCodeSourceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "opencode.db"
+        db = sqlite3.connect(self.path)
+        db.executescript("""
+            CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, title TEXT, time_created INTEGER);
+            CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, data TEXT);
+            CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, data TEXT);
+        """)
+        db.execute("INSERT INTO session VALUES(?,?,?,?)", ("ses_123", "/work/project", "Retry work", 1000))
+        db.execute("INSERT INTO message VALUES(?,?,?,?)", ("msg_user", "ses_123", 2000, json.dumps({"role": "user"})))
+        db.execute("INSERT INTO message VALUES(?,?,?,?)", ("msg_assistant", "ses_123", 3000, json.dumps({"role": "assistant"})))
+        db.execute("INSERT INTO part VALUES(?,?,?,?)", ("prt_1", "msg_user", "ses_123", json.dumps({"type": "text", "text": "fix retry backoff"})))
+        db.execute("INSERT INTO part VALUES(?,?,?,?)", ("prt_2", "msg_assistant", "ses_123", json.dumps({"type": "tool", "tool": "bash", "state": {"status": "completed", "input": {"command": "pytest"}, "output": "passed"}})))
+        db.execute("INSERT INTO part VALUES(?,?,?,?)", ("prt_3", "msg_assistant", "ses_123", json.dumps({"type": "text", "text": "The retry is fixed."})))
+        db.commit()
+        db.close()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_indexes_sqlite_messages_parts_and_searches_by_source(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        source = recall.OpenCodeSource(self.path)
+
+        self.assertEqual(recall.index(conn, source=source, quiet=True), 2)
+        args = SimpleNamespace(query="retry", typo=False, project=None, source="opencode",
+                               role=None, since=None, until=None, limit=10)
+        rows = recall.search_fuzzy(conn, args)
+
+        self.assertEqual({row["session_id"] for row in rows}, {"ses_123"})
+        self.assertTrue(all(row["source"] == "opencode" for row in rows))
+        assistant = conn.execute("SELECT text,nl_text FROM messages WHERE role='assistant'").fetchone()
+        self.assertIn('[tool: bash] {"command": "pytest"}', assistant["text"])
+        self.assertIn("passed", assistant["text"])
+        self.assertEqual(assistant["nl_text"], "The retry is fixed.")
+        self.assertEqual(recall.index(conn, source=source, quiet=True), 0)
+
+    def test_opencode_resume_command_uses_session_id(self):
+        completed = SimpleNamespace(returncode=0)
+        with mock.patch.object(recall.subprocess, "run", return_value=completed) as execute, \
+                self.assertRaises(SystemExit):
+            recall._resume("ses_123", "ok", "/work/project", source="opencode",
+                           resume_arg="ses_123")
+
+        execute.assert_called_once_with(["opencode", "--session", "ses_123"], cwd="/work/project")
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,13 +1,14 @@
 """Persist normalized transcript messages in Recall's SQLite index."""
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .ingestion import ClaudeCodeSource, CodexSource, PiSource, _epoch
+from .ingestion import ClaudeCodeSource, CodexSource, OpenCodeSource, PiSource, _epoch
 
 HOME = Path.home()
 STATE_DIR = HOME / ".recall"
@@ -165,7 +166,79 @@ def _reindex_file(conn, source, path, row, full: bool):
 
 
 # harnesses indexed together — a single DB holds all sources, results mix + tag.
-SOURCES = [ClaudeCodeSource, PiSource, CodexSource]
+SOURCES = [ClaudeCodeSource, PiSource, CodexSource, OpenCodeSource]
+
+
+def _index_opencode(conn, source, full=False, purge_missing=False, quiet=False):
+    """Snapshot OpenCode's normalized session/message/part SQLite tables."""
+    init_db(conn)
+    disk = source.files()
+    if not disk:
+        missing = conn.execute("SELECT COUNT(*) FROM files WHERE source=?", (source.name,)).fetchone()[0]
+        if purge_missing:
+            conn.execute("DELETE FROM messages WHERE source=?", (source.name,))
+            conn.execute("DELETE FROM files WHERE source=?", (source.name,))
+        else:
+            conn.execute("UPDATE files SET present=0 WHERE source=?", (source.name,))
+        conn.commit()
+        if not quiet:
+            print(f"  {source.name}: 0 files (+0 messages, {missing} missing{'→purged' if purge_missing else '→archived'})")
+        return 0
+    db = disk[0]
+    st = db.stat()
+    # OpenCode uses WAL mode, so active writes may only touch the `-wal` file.
+    wal = Path(str(db) + "-wal")
+    wal_st = wal.stat() if wal.exists() else None
+    source_size = st.st_size + (wal_st.st_size if wal_st else 0)
+    source_mtime = max(st.st_mtime, wal_st.st_mtime if wal_st else st.st_mtime)
+    prior = conn.execute("SELECT size,mtime FROM files WHERE path=? AND source=?", (str(db), source.name)).fetchone()
+    if prior and not full and prior["size"] == source_size and prior["mtime"] == source_mtime:
+        conn.execute("UPDATE files SET present=1 WHERE source=?", (source.name,))
+        conn.commit()
+        return 0
+    remote = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True)
+    remote.row_factory = sqlite3.Row
+    sessions = {r["id"]: r for r in remote.execute("SELECT id,directory,title,time_created FROM session")}
+    parts: dict[str, list[dict]] = {}
+    for row in remote.execute("SELECT message_id,data FROM part ORDER BY message_id,id"):
+        try:
+            parts.setdefault(row["message_id"], []).append(json.loads(row["data"]))
+        except (TypeError, json.JSONDecodeError):
+            continue
+    messages = list(remote.execute("SELECT id,session_id,time_created,data FROM message ORDER BY time_created,id"))
+    remote.close()
+    conn.execute("DELETE FROM messages WHERE source=?", (source.name,))
+    conn.execute("DELETE FROM files WHERE source=?", (source.name,))
+    added = 0
+    for line, row in enumerate(messages):
+        session = sessions.get(row["session_id"])
+        if not session:
+            continue
+        try:
+            info = json.loads(row["data"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        out = source.extract_message(info, parts.get(row["id"], []))
+        if not out:
+            continue
+        text, nl, role, rtype = out
+        epoch = row["time_created"] / 1000
+        ts = datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+        virtual_path = f"{db}#{row['session_id']}"
+        conn.execute("INSERT INTO messages(path,session_id,source,project,role,type,ts,epoch,line_no,text,nl_text) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                     (virtual_path, row["session_id"], source.name, session["directory"], role, rtype, ts, epoch, line, text, nl))
+        added += 1
+    now = datetime.now(timezone.utc).timestamp()
+    conn.execute("INSERT INTO files(path,session_id,source,project,size,mtime,byte_offset,lines,present,last_indexed) VALUES(?,?,?,?,?,?,?,?,1,?)",
+                 (str(db), "", source.name, None, source_size, source_mtime, source_size, len(messages), now))
+    for sid, session in sessions.items():
+        virtual_path = f"{db}#{sid}"
+        conn.execute("INSERT INTO files(path,session_id,source,project,size,mtime,byte_offset,lines,present,last_indexed) VALUES(?,?,?,?,?,?,?,?,1,?)",
+                     (virtual_path, sid, source.name, session["directory"], source_size, source_mtime, source_size, len(messages), now))
+    conn.commit()
+    if not quiet:
+        print(f"  {source.name}: 1 files (+{added} messages, 0 missing)")
+    return added
 
 
 def index(conn, source=None, full=False, purge_missing=False, quiet=False):
@@ -173,6 +246,8 @@ def index(conn, source=None, full=False, purge_missing=False, quiet=False):
     `WHERE source=?`, so sources never touch each other's rows. Derived tables
     (embeddings) are handled once by `index_all`, not here."""
     source = source or ClaudeCodeSource()
+    if isinstance(source, OpenCodeSource):
+        return _index_opencode(conn, source, full, purge_missing, quiet)
     init_db(conn)
     disk = source.files()
     seen = set()

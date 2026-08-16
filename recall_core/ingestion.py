@@ -14,6 +14,7 @@ from pathlib import Path
 HOME = Path.home()
 PROJECTS_DIR = HOME / ".claude" / "projects"
 PI_SESSIONS_DIR = HOME / ".pi" / "agent" / "sessions"
+OPENCODE_DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", HOME / ".local" / "share")) / "opencode"
 MAX_MSG_CHARS = 100_000
 MAX_TOOL_INPUT = 2_000
 TITLE_FIELDS = {
@@ -32,6 +33,15 @@ def _codex_root() -> Path:
     """Codex's session root ($CODEX_HOME/sessions, default ~/.codex/sessions)."""
     home = os.environ.get("CODEX_HOME")
     return (Path(home).expanduser() if home else HOME / ".codex") / "sessions"
+
+
+def _opencode_db() -> Path:
+    """OpenCode's SQLite database, honoring its documented path overrides."""
+    value = os.environ.get("OPENCODE_DB")
+    if value and value != ":memory:":
+        path = Path(value).expanduser()
+        return path if path.is_absolute() else OPENCODE_DATA_DIR / path
+    return OPENCODE_DATA_DIR / "opencode.db"
 
 MAX_MSG_CHARS = 100_000      # cap a single message's indexed text
 MAX_TOOL_INPUT = 2_000       # cap a tool_use input blob
@@ -354,3 +364,59 @@ class CodexSource(Source):
             q = (p.get("action") or {}).get("query", "")
             return (f"[tool: web_search] {q}", "", "tool", pt) if q else None
         return None                # reasoning (encrypted), tool_search_call, etc.
+
+
+def _opencode_flatten(parts) -> tuple[str, str]:
+    """Flatten OpenCode V1 message parts, using Pi-like tool formatting."""
+    full: list[str] = []
+    natural: list[str] = []
+    for part in parts if isinstance(parts, list) else []:
+        if not isinstance(part, dict):
+            continue
+        ptype = part.get("type")
+        if ptype == "text":
+            value = part.get("text", "")
+            full.append(value)
+            natural.append(value)
+        elif ptype == "reasoning":
+            full.append(part.get("text", ""))
+        elif ptype in ("tool", "tool-invocation"):
+            tool = part.get("toolInvocation") or part
+            state = tool.get("state") or {}
+            name = part.get("tool") or tool.get("toolName", "")
+            args = state.get("input") if isinstance(state, dict) else None
+            if args is None:
+                args = tool.get("args", {})
+            value = json.dumps(args, ensure_ascii=False) if not isinstance(args, str) else args
+            full.append(f"[tool: {name}] {value[:MAX_TOOL_INPUT]}" + ("…" if len(value) > MAX_TOOL_INPUT else ""))
+            if isinstance(state, dict) and state.get("status") == "completed":
+                output = state.get("output")
+                if output:
+                    full.append(str(output))
+            elif tool.get("state") == "result" and tool.get("result"):
+                full.append(str(tool["result"]))
+        elif ptype == "file":
+            full.append(f"[file: {part.get('filename') or part.get('mime') or part.get('mediaType', '')}]")
+    return "\n".join(filter(None, full)), "\n".join(filter(None, natural))
+
+
+class OpenCodeSource(Source):
+    """OpenCode conversations stored in its data-directory SQLite database."""
+    name = "opencode"
+
+    def __init__(self, db: Path | None = None):
+        self.db = db or _opencode_db()
+
+    def files(self) -> list[Path]:
+        return [self.db] if self.db.is_file() else []
+
+    @staticmethod
+    def session_id(path: Path) -> str:
+        return path.stem
+
+    def extract_message(self, info: dict, parts: list[dict]):
+        role = info.get("role")
+        if role not in ("user", "assistant"):
+            return None
+        text, nl = _opencode_flatten(parts)
+        return (_cap(text, marker=True), _cap(nl), role, role) if text else None
