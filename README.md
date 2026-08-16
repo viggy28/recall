@@ -34,7 +34,7 @@ The extension adds the `/recall` dashboard and the `recall_search` and `recall_c
 
 ```text
 Search my recent sessions for the retry backoff change.
-Create an events-db context that tracks open questions.
+Attach my migration-safe-notsafe context before we continue.
 ```
 
 ### Standalone CLI
@@ -54,11 +54,11 @@ You can also install the `recall` command from this checkout. See the [usage gui
 Context banks turn useful material from past conversations into reusable Markdown documents. Create, review, update, and attach them to future Pi sessions without moving your project context to a hosted service.
 
 ```bash
-recall context create events-db "Track the durable state and open questions"
-recall context update events-db "The migration is complete"
+recall context show migration-safe-notsafe
+recall context update migration-safe-notsafe "Record the latest parser and rules-engine decisions"
 ```
 
-![Recall context update review](docs/issue-13-review-controls.svg)
+![Recall context update review](docs/context-review-controls.svg)
 
 ## Documentation
 

@@ -27,27 +27,30 @@ Sleep 300ms
 Type "export PS1='viggy@mac recall % '"
 Enter
 Sleep 300ms
+Type "set -e"
+Enter
+Sleep 300ms
 Ctrl+L
 Show
 
-Type "./.venv/bin/recall index --stats"
+Type "./.venv/bin/python recall.py index --stats"
 Enter
 Sleep 1.5s
 
-Type "./.venv/bin/recall search 'migration safe not safe' --limit 3 --no-index"
+Type "./.venv/bin/python recall.py search 'migration safe not safe' --limit 3 --no-index"
 Enter
 Sleep 3s
 
 Ctrl+L
-Type "./.venv/bin/recall search --semantic 'local knowledge base for coding agent conversations' --limit 3 --no-index"
+Type "./.venv/bin/python recall.py search --semantic 'local knowledge base for coding agent conversations' --limit 3 --no-index"
 Enter
 Sleep 3s
 
 Ctrl+L
-Type "./.venv/bin/recall context list"
+Type "./.venv/bin/python recall.py context list"
 Enter
 Sleep 1s
-Type "./.venv/bin/recall context show recall"
+Type "./.venv/bin/python recall.py context show recall"
 Enter
 Sleep 3s
 
@@ -55,5 +58,5 @@ Ctrl+L
 Type "npm view recall-pi version"
 Enter
 Sleep 1.5s
-Type "# Pi extension: /recall, recall_search, recall_context"
+Type "# Demo complete — Pi extension: /recall, recall_search, recall_context"
 Sleep 2s
