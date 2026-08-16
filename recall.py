@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""recall — local work memory over coding-agent sessions.
+"""recall — a local knowledge base built from coding-agent conversations.
 
 Indexes JSONL transcripts from multiple harnesses (Claude Code under
 ~/.claude/projects, Pi under ~/.pi/agent/sessions) into one local SQLite
@@ -2028,7 +2028,7 @@ def _add_search_flags(p):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="recall",
-        description="local work memory over coding-agent sessions (Claude Code, Pi, …)",
+        description="local knowledge base built from coding-agent conversations (Claude Code, Pi, …)",
     )
     sub = ap.add_subparsers(dest="cmd")
 
