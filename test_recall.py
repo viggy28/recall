@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import recall
+from recall_core.graph import build_graph, extract_entities, render_graph
 
 
 class ReleaseManifestTests(unittest.TestCase):
@@ -24,6 +25,53 @@ class ReleaseManifestTests(unittest.TestCase):
 
         self.assertIsNotNone(pyproject_match)
         self.assertEqual(package_version, pyproject_match.group(1))
+
+
+class KnowledgeGraphTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        recall.init_db(self.conn)
+        rows = [
+            ("/a", "s1", "pi", "/work/alpha", "user", "user", "2026-01-01", 10, 1,
+             "Open AI works with SQLite", "Open AI works with SQLite"),
+            ("/a", "s1", "pi", "/work/alpha", "assistant", "assistant", "2026-01-02", 20, 2,
+             "OpenAI.com and SQLite", "OpenAI.com and SQLite"),
+            ("/b", "s2", "codex", "/work/beta", "user", "user", "2026-02-01", 30, 1,
+             "NASA discusses #Space", "NASA discusses #Space"),
+        ]
+        self.conn.executemany(
+            "INSERT INTO messages(path,session_id,source,project,role,type,ts,epoch,line_no,text,nl_text) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)", rows)
+
+    def test_entity_extraction_normalizes_common_variants(self):
+        entities = extract_entities("Open AI met OpenAI.com about SQLite")
+
+        self.assertEqual([entity["id"] for entity in entities].count("openai"), 1)
+        self.assertIn("sqlite", {entity["id"] for entity in entities})
+
+    def test_graph_has_weighted_edges_and_source_references(self):
+        graph = build_graph(self.conn)
+        edge = next(edge for edge in graph["edges"]
+                    if {edge["source"], edge["target"]} == {"openai", "sqlite"})
+        node = next(node for node in graph["nodes"] if node["id"] == "openai")
+
+        self.assertEqual(edge["weight"], 2)
+        self.assertEqual(node["mentions"], 2)
+        self.assertEqual(node["references"][0]["session_id"], "s1")
+        self.assertEqual(node["references"][0]["line_no"], 1)
+
+    def test_graph_filters_and_limits_entities(self):
+        graph = build_graph(self.conn, source="codex", entity_type="organization", max_nodes=1)
+
+        self.assertEqual([node["id"] for node in graph["nodes"]], ["nasa"])
+        self.assertEqual(graph["edges"], [])
+
+    def test_dot_output_is_a_usable_undirected_graph(self):
+        output = render_graph(build_graph(self.conn, min_edge_weight=2), "dot")
+
+        self.assertIn("graph recall {", output)
+        self.assertIn('"openai" -- "sqlite" [weight=2', output)
 
 
 class TuiPresentationTests(unittest.TestCase):

@@ -1,1 +1,1 @@
-"""Core ingestion, indexing, and retrieval subsystems for Recall."""
+"""Core ingestion, indexing, retrieval, and graph subsystems for Recall."""
