@@ -49,6 +49,28 @@ python3 recall.py recent
 
 You can also install the `recall` command from this checkout. See the [usage guide](docs/usage.md) for setup and all available commands.
 
+## Knowledge graphs
+
+`recall graph` extracts named entities locally with a deterministic, dependency-free
+heuristic and connects entities mentioned in the same message. JSON output contains
+nodes, weighted co-occurrence edges, and references to the source session, message,
+path, and transcript line. DOT output can be opened by Graphviz and other graph tools.
+
+```bash
+# D3/Cytoscape-friendly JSON on stdout
+recall graph --max-nodes 75 --min-edge-weight 2 > graph.json
+
+# Scope the graph and create a Graphviz artifact
+recall graph --source pi --project recall --since 2026-01-01 \
+  --entity-type organization --format dot --output graph.dot
+dot -Tsvg graph.dot > graph.svg
+```
+
+Available scopes include `--since`, `--until`, `--source`, `--project`, and
+`--entity-type`. Use `--max-nodes` and `--min-edge-weight` to keep dense graphs
+readable. Entity extraction is deliberately conservative; it recognizes capitalized
+names, acronyms, domains, `@people`, and `#topics` without sending content to a model.
+
 ## Context banks
 
 Context banks turn useful material from past conversations into reusable Markdown documents. Create, review, update, and attach them to future Pi sessions without moving your project context to a hosted service.
