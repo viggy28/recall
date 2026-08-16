@@ -99,6 +99,7 @@ from recall_core.ingestion import (
 from recall_core.indexing import (
     SCHEMA, SOURCES, _levenshtein, _reindex_file, connect, index, init_db,
 )
+from recall_core.graph import build_graph, render_graph
 
 def index_all(conn, full=False, purge_missing=False, semantic=False, quiet=False):
     """Index every registered source, then build/refresh derived tables once."""
@@ -2046,6 +2047,21 @@ def main(argv=None):
     pr.add_argument("--json", action="store_true", help="machine-readable output")
     pr.add_argument("--no-index", action="store_true", help="skip the auto incremental re-index")
 
+    pgraph = sub.add_parser("graph", help="generate an entity co-occurrence knowledge graph")
+    pgraph.add_argument("--format", choices=["json", "dot"], default="json",
+                        help="output format (default: json)")
+    pgraph.add_argument("-o", "--output", help="write to a file instead of stdout")
+    pgraph.add_argument("--source", choices=["claude", "pi", "codex"], help="filter: harness")
+    pgraph.add_argument("--project", help="filter: project path substring")
+    pgraph.add_argument("--since", help="filter: on/after YYYY-MM-DD")
+    pgraph.add_argument("--until", help="filter: on/before YYYY-MM-DD")
+    pgraph.add_argument("--entity-type", choices=["entity", "organization", "person", "topic"])
+    pgraph.add_argument("--min-edge-weight", type=int, default=1,
+                        help="minimum co-occurrences for an edge (default: 1)")
+    pgraph.add_argument("--max-nodes", type=int, default=100,
+                        help="keep the most-mentioned entities (default: 100)")
+    pgraph.add_argument("--no-index", action="store_true", help="skip the auto incremental re-index")
+
     pg = sub.add_parser("go", help="resume a result of the last search")
     pg.add_argument("target", metavar="N|ID",
                     help="result number, or a session-id prefix, from the last search")
@@ -2138,7 +2154,7 @@ def main(argv=None):
     }
     if len(argv) >= 2 and argv[0] == "context" and argv[1] not in context_commands:
         argv = ["context", "show", *argv[1:]]
-    commands = ("index", "search", "recent", "go", "tui", "context", "-h", "--help")
+    commands = ("index", "search", "recent", "graph", "go", "tui", "context", "-h", "--help")
     if argv and argv[0] not in commands:
         argv = ["search", *argv]
     args = ap.parse_args(argv)
@@ -2194,6 +2210,27 @@ def main(argv=None):
                       f"{e['title'] or e['session_id']}")
         return
 
+    if args.cmd == "graph":
+        init_db(conn)
+        if not args.no_index:
+            index_all(conn, quiet=True)
+        if args.max_nodes < 1 or args.min_edge_weight < 1:
+            ap.error("--max-nodes and --min-edge-weight must be positive")
+        graph = build_graph(
+            conn, source=args.source, project=args.project,
+            since=_epoch(args.since + "T00:00:00Z") if args.since else None,
+            until=_epoch(args.until + "T23:59:59Z") if args.until else None,
+            entity_type=args.entity_type, min_edge_weight=args.min_edge_weight,
+            max_nodes=args.max_nodes,
+        )
+        rendered = render_graph(graph, args.format)
+        if args.output:
+            Path(args.output).write_text(rendered, encoding="utf-8")
+            print(f"wrote {len(graph['nodes'])} nodes and {len(graph['edges'])} edges to {args.output}")
+        else:
+            print(rendered, end="")
+        return
+
     if args.cmd == "search":
         init_db(conn)
         if not args.no_index:
@@ -2212,4 +2249,3 @@ def main(argv=None):
 
 if __name__ == "__main__":
     main()
-
