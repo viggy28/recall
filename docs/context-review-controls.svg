@@ -1,12 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="560" viewBox="0 0 1040 560" role="img" aria-label="Recall review UI with prominent action controls">
+<svg xmlns="http://www.w3.org/2000/svg" width="1040" height="560" viewBox="0 0 1040 560" role="img" aria-label="Recall reviewing an update to the migration-safe-notsafe context">
   <rect width="1040" height="560" fill="#0b1020"/>
   <rect x="28" y="28" width="984" height="504" rx="14" fill="#111827" stroke="#334155" stroke-width="2"/>
-  <text x="56" y="72" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#a78bfa">Update events-db</text>
-  <text x="56" y="118" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#94a3b8">--- events-db (current)</text>
-  <text x="56" y="150" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#94a3b8">+++ events-db (proposed)</text>
+  <text x="56" y="72" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#a78bfa">Update migration-safe-notsafe</text>
+  <text x="56" y="118" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#94a3b8">--- migration-safe-notsafe (current)</text>
+  <text x="56" y="150" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#94a3b8">+++ migration-safe-notsafe (proposed)</text>
   <text x="56" y="190" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#38bdf8">@@ change 1 @@</text>
-  <text x="56" y="230" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#f87171">- - Migration is planned.</text>
-  <text x="56" y="266" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4ade80">+ - Migration is complete.</text>
+  <text x="56" y="230" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#f87171">- - The verdict path may use an LLM.</text>
+  <text x="56" y="266" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#4ade80">+ - The verdict path is deterministic and local.</text>
   <text x="56" y="326" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#38bdf8">╭────────────────────────────────────────────────────────────────────────────────────────╮</text>
   <text x="56" y="360" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" fill="#38bdf8">│</text>
   <text x="82" y="360" font-family="SFMono-Regular, Menlo, Consolas, monospace" font-size="18" font-weight="700" fill="#a78bfa">Review actions</text>
