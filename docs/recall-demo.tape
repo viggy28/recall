@@ -39,7 +39,7 @@ Enter
 Sleep 3s
 
 Ctrl+L
-Type "./.venv/bin/recall search --semantic 'local memory tool for coding agent sessions' --limit 3 --no-index"
+Type "./.venv/bin/recall search --semantic 'local knowledge base for coding agent conversations' --limit 3 --no-index"
 Enter
 Sleep 3s
 
@@ -52,7 +52,7 @@ Enter
 Sleep 3s
 
 Ctrl+L
-Type "npm view recall-pi version description"
+Type "npm view recall-pi version"
 Enter
 Sleep 1.5s
 Type "# Pi extension: /recall, recall_search, recall_context"
