@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import recall
+from recall_core import indexing
 from recall_core.graph import build_graph, extract_entities, render_graph
 
 
@@ -25,6 +26,150 @@ class ReleaseManifestTests(unittest.TestCase):
 
         self.assertIsNotNone(pyproject_match)
         self.assertEqual(package_version, pyproject_match.group(1))
+
+
+class TranscriptEncodingTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.path = Path(self.tempdir.name) / "session.jsonl"
+        self.source = recall.PiSource(Path(self.tempdir.name))
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        recall.init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+        self.tempdir.cleanup()
+
+    def _index(self, row=None):
+        return indexing._reindex_file(self.conn, self.source, self.path, row, False)
+
+    def test_surrogates_are_repaired_at_the_database_boundary(self):
+        records = [
+            r'{"type":"session","cwd":"/tmp/bad\ud83d-project"}',
+            r'{"type":"message","message":{"role":"user","content":"high \ud83d end"}}',
+            r'{"type":"message","message":{"role":"user","content":"low \ude00 end"}}',
+            r'{"type":"message","message":{"role":"user","content":"pair \ud83d\ude00 end"}}',
+            r'{"type":"message","message":{"role":"user","content":"normal café"}}',
+            r'{"type":"message","message":{"role":"user","content":"after malformed text"}}',
+        ]
+        self.path.write_text("\n".join(records) + "\n", encoding="utf-8")
+
+        self.assertEqual(self._index(), 5)
+        rows = self.conn.execute(
+            "SELECT project,text FROM messages ORDER BY line_no"
+        ).fetchall()
+
+        self.assertEqual(rows[0]["project"], "/tmp/bad\ufffd-project")
+        self.assertEqual([row["text"] for row in rows], [
+            "high \ufffd end", "low \ufffd end", "pair 😀 end", "normal café",
+            "after malformed text",
+        ])
+
+    def test_valid_manual_surrogate_pair_is_combined(self):
+        self.assertEqual(indexing._sanitize_db_text("\ud83d\ude00"), "😀")
+
+    def test_malformed_utf8_preserves_raw_incremental_offset(self):
+        first = b'{"type":"message","message":{"role":"user","content":"bad \xff byte"}}\n'
+        partial = b'{"type":"message","message":{"role":"user","content":"sec'
+        self.path.write_bytes(first + partial)
+
+        self.assertEqual(self._index(), 1)
+        file_row = self.conn.execute(
+            "SELECT * FROM files WHERE path=?", (str(self.path),)
+        ).fetchone()
+        self.assertEqual(file_row["byte_offset"], len(first))
+        self.assertEqual(file_row["lines"], 1)
+
+        with self.path.open("ab") as stream:
+            stream.write(b'ond"}}\n')
+        self.assertEqual(self._index(file_row), 1)
+
+        rows = self.conn.execute(
+            "SELECT line_no,text FROM messages ORDER BY line_no"
+        ).fetchall()
+        self.assertEqual([(row["line_no"], row["text"]) for row in rows], [
+            (0, "bad \ufffd byte"), (1, "second"),
+        ])
+
+    def test_utf8_bom_does_not_hide_first_record(self):
+        payload = (
+            b'\xef\xbb\xbf{"type":"session","cwd":"/tmp/bom-project"}\n'
+            b'{"type":"message","message":{"role":"user","content":"visible"}}\n'
+        )
+        self.path.write_bytes(payload)
+
+        self.assertEqual(self._index(), 1)
+        row = self.conn.execute("SELECT project,text FROM messages").fetchone()
+        self.assertEqual(dict(row), {"project": "/tmp/bom-project", "text": "visible"})
+
+    def test_embedded_nul_is_replaced_and_text_remains_searchable(self):
+        self.path.write_text(
+            r'{"type":"message","message":{"role":"user","content":"before\u0000after"}}' + "\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(self._index(), 1)
+        text = self.conn.execute("SELECT text FROM messages").fetchone()[0]
+        hits = self.conn.execute(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'before AND after'"
+        ).fetchone()[0]
+        self.assertEqual(text, "before\ufffdafter")
+        self.assertNotIn("\x00", text)
+        self.assertEqual(hits, 1)
+
+    def test_same_size_rewrite_triggers_full_replacement(self):
+        # Same byte length, different content, newer mtime. The stored size is
+        # identical, so this must not be treated as an append (which would leave
+        # the stale message and seek past the real content).
+        self.path.write_text(
+            '{"type":"message","message":{"role":"user","content":"AAAA"}}\n',
+            encoding="utf-8",
+        )
+        self.assertEqual(self._index(), 1)
+
+        self.path.write_text(
+            '{"type":"message","message":{"role":"user","content":"BBBB"}}\n',
+            encoding="utf-8",
+        )
+        st = self.path.stat()
+        os.utime(self.path, (st.st_atime, st.st_mtime + 10))
+        row = self.conn.execute("SELECT * FROM files WHERE source='pi'").fetchone()
+
+        self.assertEqual(self._index(row=row), 1)
+        texts = [r["text"] for r in self.conn.execute("SELECT text FROM messages")]
+        self.assertEqual(texts, ["BBBB"])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
+
+    def test_existing_nul_rows_are_repaired_in_place_without_rebuild(self):
+        # Simulate pre-fix data already stored: a row with an embedded NUL that
+        # old code persisted. The fix must repair it in place (no --full needed),
+        # preserving the rowid so any chunk/embedding references stay valid.
+        self.conn.execute(
+            "INSERT INTO messages(path,session_id,source,project,role,type,ts,epoch,line_no,text,nl_text) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ("/sess/1.jsonl", "ses", "pi", None, "user", "user", "", 0, 1,
+             "bad\x00word", "bad\x00word"),
+        )
+        message_id = self.conn.execute("SELECT id FROM messages").fetchone()[0]
+        self.conn.commit()
+
+        self.assertEqual(recall.index(self.conn, source=self.source, quiet=True), 0)
+
+        row = self.conn.execute("SELECT id,text,nl_text FROM messages").fetchone()
+        self.assertEqual(row["id"], message_id)  # rowid preserved
+        self.assertEqual(row["text"], "bad\ufffdword")
+        self.assertEqual(row["nl_text"], "bad\ufffdword")
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'bad AND word'"
+        ).fetchone()[0], 1)
+        marker = self.conn.execute(
+            "SELECT value FROM index_meta WHERE key='text-normalization:pi'"
+        ).fetchone()[0]
+        self.assertEqual(marker, indexing.TEXT_NORMALIZATION_VERSION)
+
+        # A second run must be a no-op (marker set, nothing re-repaired).
+        self.assertEqual(recall.index(self.conn, source=self.source, quiet=True), 0)
 
 
 class KnowledgeGraphTests(unittest.TestCase):
@@ -617,6 +762,23 @@ class OpenCodeSourceTests(unittest.TestCase):
         self.assertIn("passed", assistant["text"])
         self.assertEqual(assistant["nl_text"], "The retry is fixed.")
         self.assertEqual(recall.index(conn, source=source, quiet=True), 0)
+
+    def test_opencode_text_is_sanitized_before_sqlite_insertion(self):
+        remote = sqlite3.connect(self.path)
+        remote.execute(
+            "UPDATE part SET data=? WHERE id='prt_1'",
+            (json.dumps({"type": "text", "text": "bad \ud83d\x00 tail"}),),
+        )
+        remote.commit()
+        remote.close()
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+
+        self.assertEqual(recall.index(conn, source=recall.OpenCodeSource(self.path), quiet=True), 2)
+        text = conn.execute("SELECT text FROM messages WHERE role='user'").fetchone()[0]
+        conn.close()
+
+        self.assertEqual(text, "bad \ufffd\ufffd tail")
 
     def test_opencode_resume_command_uses_session_id(self):
         completed = SimpleNamespace(returncode=0)
