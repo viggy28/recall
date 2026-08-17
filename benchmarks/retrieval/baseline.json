@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "name": "approved-v0.2.0-retrieval-policy",
+  "source_tag": "v0.2.0",
+  "source_commit": "dce7f473f2763375c86d23e9c8ce3aa517fdd84a",
+  "corpus_version": "retrieval-v1",
+  "seed": 350036,
+  "quality": {
+    "minimum_pass_rate": 1.0,
+    "minimum_mrr": 0.75
+  },
+  "performance": {
+    "1000": {"max_index_seconds": 60, "max_warm_p95_ms": 5000, "max_db_mb": 100},
+    "10000": {"max_index_seconds": 180, "max_warm_p95_ms": 10000, "max_db_mb": 300},
+    "100000": {"max_index_seconds": 900, "max_warm_p95_ms": 30000, "max_db_mb": 1500, "max_peak_rss_mb": 3000}
+  },
+  "notes": "Initial reviewed catastrophic ceilings. Candidate CI reads this file but never updates it. Quality expectations come from the hand-authored retrieval-v1 specification."
+}

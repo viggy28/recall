@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "corpus_version": "retrieval-v1",
+  "seed": 350036,
+  "sessions": [
+    {
+      "id": "ses-exact-error",
+      "messages": [
+        {"role": "assistant", "type": "assistant", "text": "The crash was UnicodeEncodeError: surrogates not allowed in retry_budget_ms. Fix normalize_surrogates(text) before the SQLite bind.", "nl_text": "The crash was UnicodeEncodeError: surrogates not allowed in retry_budget_ms. Fix normalize_surrogates(text) before the SQLite bind."}
+      ]
+    },
+    {
+      "id": "ses-typo-auth",
+      "messages": [
+        {"role": "user", "type": "user", "text": "The plasma widget rejected the refresh token.", "nl_text": "The plasma widget rejected the refresh token."}
+      ]
+    },
+    {
+      "id": "ses-split-migration",
+      "messages": [
+        {"role": "user", "type": "user", "text": "Prepare the migration plan.", "nl_text": "Prepare the migration plan."},
+        {"role": "assistant", "type": "assistant", "text": "The checkpoint must be durable.", "nl_text": "The checkpoint must be durable."},
+        {"role": "user", "type": "user", "text": "Enable WAL before rollout.", "nl_text": "Enable WAL before rollout."}
+      ]
+    },
+    {
+      "id": "ses-tool-trace",
+      "messages": [
+        {"role": "tool", "type": "function_call", "text": "[tool: Bash] pytest tests/test_scheduler.py -k deadlock_sentinel", "nl_text": ""},
+        {"role": "tool", "type": "function_call_output", "text": "FAILED DEADLOCK_SENTINEL_731 lock acquisition timed out", "nl_text": ""}
+      ]
+    },
+    {
+      "id": "ses-current-decision",
+      "messages": [
+        {"role": "assistant", "type": "assistant", "text": "Current decision: use exponential jitter for the retry policy; this supersedes fixed delays.", "nl_text": "Current decision: use exponential jitter for the retry policy; this supersedes fixed delays."}
+      ]
+    },
+    {
+      "id": "ses-stale-decision",
+      "messages": [
+        {"role": "assistant", "type": "assistant", "text": "An old decision used fixed retry delays.", "nl_text": "An old decision used fixed retry delays."},
+        {"role": "user", "type": "user", "text": "Jitter was discussed separately and is not current here.", "nl_text": "Jitter was discussed separately and is not current here."}
+      ]
+    },
+    {
+      "id": "ses-semantic-why",
+      "messages": [
+        {"role": "assistant", "type": "assistant", "text": "We paused production deployments because the schema migration could lock readers while old workers were still active.", "nl_text": "We paused production deployments because the schema migration could lock readers while old workers were still active."}
+      ]
+    },
+    {
+      "id": "ses-semantic-distractor",
+      "messages": [
+        {"role": "assistant", "type": "assistant", "text": "The deployment dashboard uses blue icons and the schema documentation was reformatted.", "nl_text": "The deployment dashboard uses blue icons and the schema documentation was reformatted."}
+      ]
+    }
+  ],
+  "queries": [
+    {"id": "exact-error", "mode": "fuzzy", "query": "UnicodeEncodeError retry_budget_ms", "expected": ["ses-exact-error"], "max_rank": 1},
+    {"id": "exact-code-regex", "mode": "regex", "query": "normalize_surrogates\\(text\\)", "expected": ["ses-exact-error"], "max_rank": 1},
+    {"id": "typo-auth", "mode": "fuzzy", "query": "plamsa widgte", "typo": true, "expected": ["ses-typo-auth"], "max_rank": 1},
+    {"id": "split-message-terms", "mode": "fuzzy", "query": "migration checkpoint WAL", "expected": ["ses-split-migration"], "max_rank": 3},
+    {"id": "tool-call", "mode": "fuzzy", "query": "pytest deadlock_sentinel", "expected": ["ses-tool-trace"], "max_rank": 1},
+    {"id": "tool-result-regex", "mode": "regex", "query": "DEADLOCK_SENTINEL_731", "expected": ["ses-tool-trace"], "max_rank": 1},
+    {"id": "current-over-stale", "mode": "fuzzy", "query": "current decision exponential jitter", "expected": ["ses-current-decision"], "max_rank": 1},
+    {"id": "semantic-why", "mode": "semantic", "query": "Why were production releases paused?", "expected": ["ses-semantic-why"], "max_rank": 3}
+  ]
+}

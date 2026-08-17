@@ -10,19 +10,27 @@ Merge the release pull request when it is time to publish, typically after a sma
 
 Merging the release pull request creates a GitHub release and tag. The npm publish workflow runs only for that release tag, or through `workflow_dispatch` against an existing tag. It:
 
-1. Runs tests, type checking, and package inspection.
-2. Publishes `recall-pi` from the checked-out tag.
-3. Reads the package back from npm.
-4. Verifies the version, integrity, tarball URL, and required files.
+1. Resolves the release tag to one immutable commit.
+2. Runs blocking 10,000- and 100,000-session retrieval evaluations against that commit.
+3. Runs tests, type checking, and package inspection.
+4. Publishes `recall-pi` from the same checked-out commit.
+5. Reads the package back from npm.
+6. Verifies the version, integrity, tarball URL, and required files.
+
+The GitHub release exists before this workflow starts, but npm publication is
+blocked when retrieval correctness, artifact generation, or broad catastrophic
+performance limits fail. Candidate runs read `benchmarks/retrieval/baseline.json`
+and never update it. Baseline changes must be made in a separate reviewed pull
+request and retain immutable source-tag and source-commit provenance.
 
 ## Maintainer checklist
 
 1. Merge conventional commits normally.
 2. Manually run the **Release Please** workflow when ready to prepare a release pull request.
 3. Review and merge the generated pull request when ready to ship.
-4. Watch the **Publish npm package** workflow.
-5. Confirm that npm read-back verification succeeds.
-6. For urgent recovery, rerun `workflow_dispatch` against an existing release tag instead of publishing from a laptop.
+4. Watch the **Publish npm package** workflow and inspect its retrieval artifact.
+5. Confirm that the retrieval job and npm read-back verification succeed.
+6. For urgent recovery, rerun `workflow_dispatch` against an existing release tag instead of publishing from a laptop; the retrieval gate cannot be weakened by dispatch inputs.
 
 ## npm authentication
 

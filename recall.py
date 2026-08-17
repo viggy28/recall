@@ -192,7 +192,10 @@ def _load_embedder():
         raise SemanticUnavailable(error)
     from fastembed import TextEmbedding
     import numpy as np
-    _EMBEDDER = (TextEmbedding(model_name=EMBED_MODEL), np)
+    cache_dir = os.environ.get("RECALL_EMBED_CACHE")
+    if cache_dir:
+        cache_dir = str(Path(cache_dir).expanduser())
+    _EMBEDDER = (TextEmbedding(model_name=EMBED_MODEL, cache_dir=cache_dir), np)
     return _EMBEDDER
 
 
@@ -265,21 +268,22 @@ def build_embeddings(conn, quiet=False, rechunk=False):
         print(f"\rstored {done} embeddings ({dim}d)" + " " * 12)
 
 
-_EMB_CACHE = None   # (n_embeddings, (chunk_ids, message_ids, session_ids, texts, matrix))
+_EMB_CACHE = None   # (database/change identity, matrix data)
 
 
 def _embedding_matrix(conn, np):
-    """All embeddings as one in-process matrix + parallel id/text arrays, cached
-    for the life of the process (rebuilt only when the embedding count changes).
+    """All embeddings as one in-process matrix + parallel id/text arrays.
 
-    This is what makes per-keystroke semantic search fast: the ~30k×384 matrix is
-    read from SQLite and assembled once, then every query is just a matmul.
-    Critically, it also avoids the old `LEFT JOIN files` fan-out (subagents share a
-    session_id, multiplying rows ~13×) by never joining files in the hot path.
+    Cache identity includes the connection, database path, data version, local
+    mutation count, and embedding count. Count alone is insufficient: two
+    benchmark databases with equal-sized indexes must never share vectors.
     """
     global _EMB_CACHE
     n = conn.execute("SELECT COUNT(*) FROM embeddings").fetchone()[0]
-    if _EMB_CACHE is not None and _EMB_CACHE[0] == n:
+    db_file = conn.execute("PRAGMA database_list").fetchone()[2]
+    data_version = conn.execute("PRAGMA data_version").fetchone()[0]
+    cache_key = (id(conn), db_file, data_version, conn.total_changes, n)
+    if _EMB_CACHE is not None and _EMB_CACHE[0] == cache_key:
         return _EMB_CACHE[1]
     rows = conn.execute(
         "SELECT e.chunk_id, c.message_id, c.session_id, c.text, e.vec "
@@ -291,7 +295,7 @@ def _embedding_matrix(conn, np):
                             dtype=np.float32).reshape(len(rows), -1)
         data = ([r[0] for r in rows], [r[1] for r in rows],
                 [r[2] for r in rows], [r[3] for r in rows], mat)
-    _EMB_CACHE = (n, data)
+    _EMB_CACHE = (cache_key, data)
     return data
 
 
