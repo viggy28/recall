@@ -1,0 +1,4 @@
+# Exact direct inputs for reproducible semantic evaluation on Python 3.12/Linux.
+# Transitive versions and the resolved environment are recorded in each report.
+fastembed==0.8.0
+numpy==2.5.2

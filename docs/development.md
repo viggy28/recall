@@ -24,6 +24,36 @@ Run the Python test suite:
 python3 -m unittest -v
 ```
 
+## Retrieval evaluation
+
+Retrieval quality is a versioned CI contract under `benchmarks/retrieval/`.
+The pull-request profile uses a deterministic 1,000-session corpus:
+
+```bash
+python3 -m pip install -r benchmarks/retrieval/requirements-ci.txt
+python3 -m benchmarks.retrieval.evaluate \
+  --profile pr --sessions 1000 --semantic --output-dir /tmp/recall-retrieval
+```
+
+Scheduled evaluation reuses the same specification and generator at larger scales:
+
+```bash
+python3 -m benchmarks.retrieval.evaluate --profile nightly --sessions 10000 \
+  --semantic --output-dir /tmp/recall-retrieval-10k
+python3 -m benchmarks.retrieval.evaluate --profile nightly --sessions 100000 \
+  --semantic --output-dir /tmp/recall-retrieval-100k
+```
+
+Each run writes `results.json` and `summary.md`. Golden texts use the configured
+real local embedding model. Scale-only filler sessions use deterministic zero
+vectors so CI measures SQLite storage and the production matrix/ranking path
+without claiming to benchmark 100,000 unique model inferences.
+
+PR change detection skips retrieval only when every changed path is a known-safe
+documentation or static asset. Unknown paths run fail-safe. The GitHub branch
+rule should require only `Retrieval CI / Required retrieval gate`, not the
+conditional worker job.
+
 Type-check the Pi extension:
 
 ```bash
