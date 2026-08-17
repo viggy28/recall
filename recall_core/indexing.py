@@ -13,6 +13,7 @@ from .ingestion import ClaudeCodeSource, CodexSource, OpenCodeSource, PiSource, 
 HOME = Path.home()
 STATE_DIR = HOME / ".recall"
 DB_PATH = STATE_DIR / "recall.db"
+TEXT_NORMALIZATION_VERSION = "1"
 
 
 def _sanitize_db_text(value):
@@ -103,18 +104,81 @@ CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
     INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.id, old.text);
     INSERT INTO messages_trgm(messages_trgm, rowid, text) VALUES('delete', old.id, old.text);
 END;
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, text) VALUES('delete', old.id, old.text);
+    INSERT INTO messages_trgm(messages_trgm, rowid, text) VALUES('delete', old.id, old.text);
+    INSERT INTO messages_fts(rowid, text) VALUES (new.id, new.text);
+    INSERT INTO messages_trgm(rowid, text) VALUES (new.id, new.text);
+END;
 
 CREATE TABLE IF NOT EXISTS chunks (
     id INTEGER PRIMARY KEY, message_id INTEGER, session_id TEXT, ord INTEGER, text TEXT);
 CREATE INDEX IF NOT EXISTS idx_chunk_msg ON chunks(message_id);
 CREATE TABLE IF NOT EXISTS embeddings (chunk_id INTEGER PRIMARY KEY, vec BLOB);
 CREATE TABLE IF NOT EXISTS embed_meta (model TEXT, dim INTEGER);
+CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value TEXT);
 """
 
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     conn.commit()
+
+
+def _normalization_key(source) -> str:
+    return f"text-normalization:{source.name}"
+
+
+def _normalization_is_current(conn, source) -> bool:
+    row = conn.execute(
+        "SELECT value FROM index_meta WHERE key=?", (_normalization_key(source),)
+    ).fetchone()
+    return bool(row and row[0] == TEXT_NORMALIZATION_VERSION)
+
+
+def _repair_normalization(conn, source) -> int:
+    """One-time in-place repair of already-indexed text.
+
+    Rewrites only rows whose stored text differs from its sanitized form,
+    without re-reading source files (so it is safe even for archived or
+    since-removed transcripts). Rowids are preserved so chunk/embedding
+    references stay valid, and the AFTER UPDATE trigger keeps FTS in sync.
+    """
+    repaired = 0
+    for r in conn.execute(
+        "SELECT id,path,session_id,project,text,nl_text FROM messages WHERE source=?",
+        (source.name,),
+    ):
+        path, sid, project, text, nl = _sanitize_db_row((
+            r["path"], r["session_id"], r["project"], r["text"], r["nl_text"],
+        ))
+        if (path, sid, project, text, nl) == (
+                r["path"], r["session_id"], r["project"], r["text"], r["nl_text"]):
+            continue
+        conn.execute(
+            "UPDATE messages SET path=?,session_id=?,project=?,text=?,nl_text=? WHERE id=?",
+            (path, sid, project, text, nl, r["id"]),
+        )
+        repaired += 1
+
+    for r in conn.execute(
+        "SELECT path,session_id,project FROM files WHERE source=?", (source.name,)
+    ):
+        path, sid, project = _sanitize_db_row((r["path"], r["session_id"], r["project"]))
+        if (path, sid, project) == (r["path"], r["session_id"], r["project"]):
+            continue
+        conn.execute(
+            "UPDATE files SET path=?,session_id=?,project=? WHERE path=?",
+            (path, sid, project, r["path"]),
+        )
+
+    conn.execute(
+        "INSERT INTO index_meta(key,value) VALUES(?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (_normalization_key(source), TEXT_NORMALIZATION_VERSION),
+    )
+    conn.commit()
+    return repaired
 
 
 # --------------------------------------------------------------------------- #
@@ -296,6 +360,8 @@ def index(conn, source=None, full=False, purge_missing=False, quiet=False):
     (embeddings) are handled once by `index_all`, not here."""
     source = source or ClaudeCodeSource()
     init_db(conn)
+    if not _normalization_is_current(conn, source):
+        _repair_normalization(conn, source)
     if isinstance(source, OpenCodeSource):
         return _index_opencode(conn, source, full, purge_missing, quiet)
     disk = source.files()

@@ -141,6 +141,36 @@ class TranscriptEncodingTests(unittest.TestCase):
         self.assertEqual(texts, ["BBBB"])
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 1)
 
+    def test_existing_nul_rows_are_repaired_in_place_without_rebuild(self):
+        # Simulate pre-fix data already stored: a row with an embedded NUL that
+        # old code persisted. The fix must repair it in place (no --full needed),
+        # preserving the rowid so any chunk/embedding references stay valid.
+        self.conn.execute(
+            "INSERT INTO messages(path,session_id,source,project,role,type,ts,epoch,line_no,text,nl_text) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ("/sess/1.jsonl", "ses", "pi", None, "user", "user", "", 0, 1,
+             "bad\x00word", "bad\x00word"),
+        )
+        message_id = self.conn.execute("SELECT id FROM messages").fetchone()[0]
+        self.conn.commit()
+
+        self.assertEqual(recall.index(self.conn, source=self.source, quiet=True), 0)
+
+        row = self.conn.execute("SELECT id,text,nl_text FROM messages").fetchone()
+        self.assertEqual(row["id"], message_id)  # rowid preserved
+        self.assertEqual(row["text"], "bad\ufffdword")
+        self.assertEqual(row["nl_text"], "bad\ufffdword")
+        self.assertEqual(self.conn.execute(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'bad AND word'"
+        ).fetchone()[0], 1)
+        marker = self.conn.execute(
+            "SELECT value FROM index_meta WHERE key='text-normalization:pi'"
+        ).fetchone()[0]
+        self.assertEqual(marker, indexing.TEXT_NORMALIZATION_VERSION)
+
+        # A second run must be a no-op (marker set, nothing re-repaired).
+        self.assertEqual(recall.index(self.conn, source=self.source, quiet=True), 0)
+
 
 class KnowledgeGraphTests(unittest.TestCase):
     def setUp(self):
