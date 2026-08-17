@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0](https://github.com/viggy28/recall/compare/v0.2.0...v0.3.0) (2026-08-17)
+
+
+### Features
+
+* add knowledge graph generation ([1f2457c](https://github.com/viggy28/recall/commit/1f2457c9810f144546ce0cb5641684a9267906a2))
+* highlight review action controls ([8ab99a8](https://github.com/viggy28/recall/commit/8ab99a888ae73b9155fe882ac94c62e78fea0281))
+
+
+### Bug Fixes
+
+* emphasize review action controls ([1ddef4f](https://github.com/viggy28/recall/commit/1ddef4f3c8eb102af706f5e70d0459ba2f2e9835))
+* emphasize review action controls ([670c0d6](https://github.com/viggy28/recall/commit/670c0d616fccf00c00aee3aaab141efdd954be29))
+* harden transcript encoding at the SQLite indexing boundary ([32e2e91](https://github.com/viggy28/recall/commit/32e2e91b3524b39d1d411df80891e8c8e431f215))
+* harden transcript encoding at the SQLite indexing boundary ([4c994c5](https://github.com/viggy28/recall/commit/4c994c5feef15e9f8fe2dd1ff563c66aee31d9cd))
+* recapture README demo without invocation errors ([64c072e](https://github.com/viggy28/recall/commit/64c072efb0dea9668f7aecd1e03644ac762c5dd1))
+* recapture README demo without invocation errors ([8ad2ba6](https://github.com/viggy28/recall/commit/8ad2ba6673f1b6d08de0170f38fc20a7862b4ac5))
+* repair already-indexed NUL/surrogate text in place ([1ac61bd](https://github.com/viggy28/recall/commit/1ac61bd775b4d1f2fe1d7b69cc9312f653b82c8c))
+* require review before overwriting contexts ([3d56117](https://github.com/viggy28/recall/commit/3d56117e02f27c026cfc5acc5b8727dfb24fa7b2))
+
 ## [0.2.0](https://github.com/viggy28/recall/compare/v0.1.0...v0.2.0) (2026-08-14)
 
 
