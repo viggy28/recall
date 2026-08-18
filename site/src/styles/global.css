@@ -1,0 +1,183 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, monospace;
+
+  /* A single restrained accent (violet), used sparingly over a black-and-white base. */
+  --color-accent-100: #ede9fe;
+  --color-accent-200: #ddd6fe;
+  --color-accent-300: #c4b5fd;
+  --color-accent-400: #a78bfa;
+  --color-accent-500: #8b5cf6;
+  --color-accent-600: #7c3aed;
+  --color-accent-700: #6d28d9;
+}
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: #0a0a0a;
+  background-color: #ffffff;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: #0a0a0a;
+  color: #ffffff;
+}
+
+/* Hero dot-grid backdrop */
+.hero-grid {
+  background-image: radial-gradient(circle at 1px 1px, #0a0a0a12 1px, transparent 0);
+  background-size: 28px 28px;
+}
+
+/* ---- Documentation / blog prose ---- */
+.prose-docs {
+  color: #262626;
+  line-height: 1.75;
+  font-size: 1rem;
+}
+
+.prose-docs > * + * {
+  margin-top: 1rem;
+}
+
+.prose-docs h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #0a0a0a;
+  margin-top: 0;
+}
+
+.prose-docs h2 {
+  font-size: 1.375rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: #0a0a0a;
+  margin-top: 2.5rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #e5e5e5;
+}
+
+.prose-docs h3 {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: #0a0a0a;
+  margin-top: 1.75rem;
+}
+
+.prose-docs p {
+  margin-top: 1rem;
+}
+
+.prose-docs strong {
+  font-weight: 600;
+  color: #0a0a0a;
+}
+
+.prose-docs a {
+  color: #7c3aed;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: #c4b5fd;
+  transition: text-decoration-color 0.15s ease;
+}
+
+.prose-docs a:hover {
+  text-decoration-color: #7c3aed;
+}
+
+.prose-docs ul {
+  list-style: disc;
+  padding-left: 1.5rem;
+  margin-top: 1rem;
+}
+
+.prose-docs ol {
+  list-style: decimal;
+  padding-left: 1.5rem;
+  margin-top: 1rem;
+}
+
+.prose-docs li {
+  margin-top: 0.5rem;
+}
+
+.prose-docs li > ul,
+.prose-docs li > ol {
+  margin-top: 0.5rem;
+}
+
+.prose-docs blockquote {
+  border-left: 3px solid #0a0a0a;
+  padding-left: 1rem;
+  color: #525252;
+  margin-top: 1rem;
+}
+
+.prose-docs hr {
+  border: 0;
+  border-top: 1px solid #e5e5e5;
+  margin: 2rem 0;
+}
+
+/* Inline code (Shiki only highlights fenced blocks) */
+.prose-docs :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: #f5f5f5;
+  border: 1px solid #e5e5e5;
+  border-radius: 0.375rem;
+  padding: 0.1em 0.35em;
+  color: #0a0a0a;
+}
+
+/* Fenced code blocks */
+.prose-docs pre {
+  margin-top: 1.25rem;
+  border-radius: 0.75rem;
+  overflow-x: auto;
+  background: #0a0a0a;
+  padding: 1rem 1.25rem;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+.prose-docs pre code {
+  font-family: var(--font-mono);
+  font-size: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.prose-docs table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1.25rem;
+  font-size: 0.9rem;
+}
+
+.prose-docs th,
+.prose-docs td {
+  border: 1px solid #e5e5e5;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+}
+
+.prose-docs th {
+  background: #fafafa;
+  font-weight: 600;
+}

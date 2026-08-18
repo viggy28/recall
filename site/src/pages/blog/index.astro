@@ -1,0 +1,47 @@
+---
+import { getCollection } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+
+const posts = (await getCollection('blog')).sort(
+  (a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf(),
+);
+---
+
+<Base
+  title="Blog — Recall"
+  description="Notes on how Recall is built, and why it works the way it does."
+>
+  <div class="mx-auto max-w-3xl px-4 py-16 sm:px-6 lg:py-20">
+    <p class="font-mono text-sm text-neutral-400">blog</p>
+    <h1 class="mt-2 text-4xl font-bold tracking-tight text-neutral-900 sm:text-5xl">
+      Blog
+    </h1>
+    <p class="mt-4 text-lg leading-relaxed text-neutral-600">
+      Notes on how Recall is built, and why it works the way it does.
+    </p>
+
+    {posts.length > 0 ? (
+      <div class="mt-12 divide-y divide-neutral-200 border-y border-neutral-200">
+        {posts.map((post) => (
+          <a href={`/blog/${post.id}`} class="group block py-6">
+            <p class="font-mono text-xs text-neutral-400">
+              {post.data.pubDate.toISOString().slice(0, 10)}
+            </p>
+            <h2 class="mt-1.5 text-xl font-semibold text-neutral-900 group-hover:text-accent-700">
+              {post.data.title}
+            </h2>
+            <p class="mt-2 text-neutral-600">{post.data.description}</p>
+          </a>
+        ))}
+      </div>
+    ) : (
+      <div class="mt-12 rounded-xl border border-dashed border-neutral-300 p-10 text-center">
+        <p class="text-lg font-medium text-neutral-900">Coming soon</p>
+        <p class="mt-2 text-neutral-500">
+          We're writing the first posts. Check back shortly — or follow along
+          on <a href="https://github.com/viggy28/recall" target="_blank" rel="noopener noreferrer" class="font-medium text-accent-600 hover:text-accent-700">GitHub</a>.
+        </p>
+      </div>
+    )}
+  </div>
+</Base>

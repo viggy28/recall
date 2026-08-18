@@ -1,0 +1,425 @@
+---
+import Base from '../layouts/Base.astro';
+import CodeWindow from '../components/CodeWindow.astro';
+
+const agents = ['Claude Code', 'Codex', 'OpenCode', 'Pi'];
+---
+
+<Base>
+  <!-- Hero -->
+  <section class="hero-grid border-b border-neutral-200">
+    <div class="mx-auto grid max-w-6xl items-center gap-12 px-4 py-20 sm:px-6 lg:grid-cols-2 lg:py-28">
+      <div>
+        <p class="font-mono text-sm text-neutral-500">
+          <span class="text-emerald-600">$</span> recall <span class="text-neutral-300">·</span> local
+          memory for coding agents
+        </p>
+        <h1
+          class="mt-5 text-4xl font-bold leading-[1.05] tracking-tight text-neutral-900 sm:text-5xl lg:text-6xl"
+        >
+          Never lose the context of a coding session again.
+        </h1>
+        <p class="mt-6 max-w-xl text-lg leading-relaxed text-neutral-600">
+          Recall indexes your Claude Code, Codex, OpenCode, and Pi sessions into
+          a local SQLite knowledge base. Search, resume, and build on everything
+          you have already done — nothing leaves your machine.
+        </p>
+        <div class="mt-8 flex flex-wrap items-center gap-3">
+          <a
+            href="/docs/usage"
+            class="rounded-lg bg-neutral-900 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-neutral-700"
+          >
+            Install in Pi
+          </a>
+          <a
+            href="/docs"
+            class="rounded-lg border border-neutral-300 px-5 py-3 text-sm font-medium text-neutral-900 transition-colors hover:bg-neutral-50"
+          >
+            Read the docs
+          </a>
+          <a
+            href="https://github.com/viggy28/recall"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-1.5 px-2 py-3 text-sm font-medium text-neutral-500 hover:text-neutral-900"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.55v-2.15c-3.2.7-3.87-1.36-3.87-1.36-.52-1.33-1.28-1.69-1.28-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.03 1.76 2.69 1.25 3.35.96.1-.75.4-1.25.72-1.54-2.55-.29-5.23-1.28-5.23-5.68 0-1.26.45-2.29 1.18-3.09-.12-.29-.51-1.46.11-3.05 0 0 .96-.31 3.15 1.18a10.9 10.9 0 0 1 5.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.59.23 2.76.11 3.05.74.8 1.18 1.83 1.18 3.09 0 4.41-2.69 5.38-5.25 5.67.41.35.78 1.05.78 2.12v3.14c0 .3.21.66.8.55A10.51 10.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z" />
+            </svg>
+            Star on GitHub
+          </a>
+        </div>
+      </div>
+
+      <div class="lg:pl-4">
+        <CodeWindow title="recall">
+          <div class="space-y-1.5">
+            <p>
+              <span class="text-emerald-400">$</span>{' '}
+              <span class="text-neutral-100">recall index</span>
+            </p>
+            <p>
+              <span class="text-emerald-400">$</span>{' '}
+              <span class="text-neutral-100">recall search</span>{' '}
+              <span class="text-accent-300">"why did we change the retry logic"</span>
+            </p>
+            <p class="pt-1 text-neutral-500">▸ pi · recall · 2 weeks ago</p>
+            <p class="text-neutral-300">
+              "Switched retries to exponential backoff because the upstream API
+            </p>
+            <p class="text-neutral-300">
+              rate-limits bursts and three retries were burning the budget."
+            </p>
+            <p class="pt-2 text-neutral-500">▸ opencode · api-client · 1 month ago</p>
+            <p class="text-neutral-300">
+              "Timeout defaults are too aggressive for large payloads —"
+            </p>
+          </div>
+        </CodeWindow>
+        <p class="mt-4 text-center font-mono text-xs text-neutral-400">
+          fuzzy · regex · local semantic search
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Why -->
+  <section class="border-b border-neutral-200 bg-neutral-50">
+    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:py-24">
+      <div class="max-w-2xl">
+        <p class="text-sm font-semibold uppercase tracking-wider text-neutral-400">
+          Why Recall
+        </p>
+        <h2 class="mt-3 text-3xl font-bold tracking-tight text-neutral-900 sm:text-4xl">
+          Your agents remember the work. You don't.
+        </h2>
+        <p class="mt-4 text-lg text-neutral-600">
+          Coding agents produce hundreds of sessions. The decisions live in
+          transcripts you'll never reopen.
+        </p>
+      </div>
+
+      <div class="mt-12 grid gap-6 md:grid-cols-3">
+        <div class="rounded-xl border border-neutral-200 bg-white p-7">
+          <p class="font-mono text-sm font-medium text-accent-600">01</p>
+          <h3 class="mt-3 text-lg font-semibold text-neutral-900">
+            You've already solved this.
+          </h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-600">
+            A bug you fixed months ago just came back. The fix — and the{" "}
+            <em>why</em> behind it — is buried in a transcript you'll never
+            reopen. Recall makes it one search away.
+          </p>
+        </div>
+        <div class="rounded-xl border border-neutral-200 bg-white p-7">
+          <p class="font-mono text-sm font-medium text-accent-600">02</p>
+          <h3 class="mt-3 text-lg font-semibold text-neutral-900">
+            Every session starts cold.
+          </h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-600">
+            The migration plan, the naming decisions, the workarounds — all
+            scattered across tools and gone the moment a session ends. Recall
+            keeps the context and lets you attach it to the next one.
+          </p>
+        </div>
+        <div class="rounded-xl border border-neutral-200 bg-white p-7">
+          <p class="font-mono text-sm font-medium text-accent-600">03</p>
+          <h3 class="mt-3 text-lg font-semibold text-neutral-900">
+            Your history is yours.
+          </h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-600">
+            Sessions are full of private decisions and half-formed ideas. They
+            belong on your machine, not in someone else's cloud. Recall is
+            local by default.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- What it does -->
+  <section class="border-b border-neutral-200">
+    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:py-24">
+      <div class="max-w-2xl">
+        <p class="text-sm font-semibold uppercase tracking-wider text-neutral-400">
+          What Recall does
+        </p>
+        <h2 class="mt-3 text-3xl font-bold tracking-tight text-neutral-900 sm:text-4xl">
+          A searchable memory, in plain Markdown and SQLite.
+        </h2>
+      </div>
+
+      <div class="mt-12 grid gap-px overflow-hidden rounded-xl border border-neutral-200 bg-neutral-200 sm:grid-cols-2 lg:grid-cols-3">
+        <!-- Search -->
+        <div class="bg-white p-7">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="text-neutral-900" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.5-3.5" />
+          </svg>
+          <h3 class="mt-4 text-base font-semibold text-neutral-900">Search everything</h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-600">
+            Fuzzy, regex, or optional local semantic search across all your
+            sessions — filter by source, project, role, or date. Find the exact
+            message where you solved it.
+          </p>
+        </div>
+        <!-- Browse -->
+        <div class="bg-white p-7">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="text-neutral-900" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 3" />
+          </svg>
+          <h3 class="mt-4 text-base font-semibold text-neutral-900">Browse &amp; resume</h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-600">
+            See recent conversations and jump back into supported sessions
+            without digging through folders.
+          </p>
+        </div>
+        <!-- Context banks -->
+        <div class="bg-white p-7">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="text-neutral-900" aria-hidden="true">
+            <path d="M6 3h9l3 3v15H6z" />
+            <path d="M9 3v3h6" />
+            <path d="M9 12h6M9 16h6" />
+          </svg>
+          <h3 class="mt-4 text-base font-semibold text-neutral-900">Context banks</h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-600">
+            Turn hard-won context into plain Markdown you can review, revise,
+            undo, export, and attach to future sessions.
+          </p>
+        </div>
+        <!-- Knowledge graphs -->
+        <div class="bg-white p-7">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="text-neutral-900" aria-hidden="true">
+            <circle cx="6" cy="6" r="2.5" />
+            <circle cx="18" cy="8" r="2.5" />
+            <circle cx="10" cy="18" r="2.5" />
+            <path d="M8 7.5 15.5 8M7.5 8l1.5 7.5M17 10.5 12 16" />
+          </svg>
+          <h3 class="mt-4 text-base font-semibold text-neutral-900">Knowledge graphs</h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-600">
+            Extract entities and relationships from your sessions as JSON or
+            DOT. See how the pieces of your work connect.
+          </p>
+        </div>
+        <!-- Local -->
+        <div class="bg-white p-7">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="text-neutral-900" aria-hidden="true">
+            <rect x="4" y="10" width="16" height="10" rx="2" />
+            <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+          </svg>
+          <h3 class="mt-4 text-base font-semibold text-neutral-900">Local by default</h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-600">
+            SQLite FTS5 under the hood. Core indexing and search use only the
+            Python standard library — nothing is uploaded.
+          </p>
+        </div>
+        <!-- CLI / extension -->
+        <div class="bg-white p-7">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="text-neutral-900" aria-hidden="true">
+            <path d="M4 17 10 11 4 5" />
+            <path d="M12 19h8" />
+          </svg>
+          <h3 class="mt-4 text-base font-semibold text-neutral-900">CLI or extension</h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-600">
+            A standalone Python CLI, or a native Pi extension with{" "}
+            <code class="font-mono text-[0.85em]">/recall</code>,{" "}
+            <code class="font-mono text-[0.85em]">recall_search</code>, and{" "}
+            <code class="font-mono text-[0.85em]">recall_context</code>.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Works where you work -->
+  <section class="border-b border-neutral-200 bg-neutral-50">
+    <div class="mx-auto max-w-6xl px-4 py-14 sm:px-6">
+      <div class="flex flex-col items-center gap-6 text-center">
+        <p class="text-sm font-semibold uppercase tracking-wider text-neutral-400">
+          Works where you work
+        </p>
+        <div class="flex flex-wrap items-center justify-center gap-3">
+          {agents.map((agent) => (
+            <span class="rounded-full border border-neutral-300 bg-white px-4 py-1.5 text-sm font-medium text-neutral-700">
+              {agent}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Install -->
+  <section id="install" class="border-b border-neutral-200">
+    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:py-24">
+      <div class="max-w-2xl">
+        <p class="text-sm font-semibold uppercase tracking-wider text-neutral-400">
+          Install
+        </p>
+        <h2 class="mt-3 text-3xl font-bold tracking-tight text-neutral-900 sm:text-4xl">
+          Up and running in a minute.
+        </h2>
+      </div>
+
+      <div class="mt-12 grid gap-6 lg:grid-cols-2">
+        <div class="rounded-xl border border-neutral-200 p-7">
+          <div class="flex items-center gap-2">
+            <span class="rounded bg-neutral-900 px-2 py-0.5 font-mono text-xs font-medium text-white">
+              Pi
+            </span>
+            <h3 class="text-lg font-semibold text-neutral-900">Pi extension</h3>
+          </div>
+          <p class="mt-3 text-sm leading-relaxed text-neutral-600">
+            Adds the <code class="font-mono text-[0.85em]">/recall</code>{' '}
+            dashboard plus the <code class="font-mono text-[0.85em]">recall_search</code>{' '}
+            and <code class="font-mono text-[0.85em]">recall_context</code> tools.
+            Ask naturally, right where you work.
+          </p>
+          <div class="mt-5 rounded-lg bg-neutral-950 p-4 font-mono text-sm text-neutral-100">
+            <p><span class="text-emerald-400">$</span> pi install npm:recall-pi</p>
+          </div>
+          <p class="mt-4 text-sm text-neutral-500">
+            <em>"Search my sessions for the retry backoff change."</em>
+          </p>
+        </div>
+
+        <div class="rounded-xl border border-neutral-200 p-7">
+          <div class="flex items-center gap-2">
+            <span class="rounded bg-neutral-900 px-2 py-0.5 font-mono text-xs font-medium text-white">
+              CLI
+            </span>
+            <h3 class="text-lg font-semibold text-neutral-900">Standalone CLI</h3>
+          </div>
+          <p class="mt-3 text-sm leading-relaxed text-neutral-600">
+            Core search has no required third-party dependencies. Install the{" "}
+            <code class="font-mono text-[0.85em]">recall</code> command for the
+            full experience.
+          </p>
+          <div class="mt-5 space-y-1 rounded-lg bg-neutral-950 p-4 font-mono text-sm text-neutral-100">
+            <p><span class="text-emerald-400">$</span> python3 recall.py index</p>
+            <p><span class="text-emerald-400">$</span> python3 recall.py search <span class="text-accent-300">"deadlock investigation"</span></p>
+            <p><span class="text-emerald-400">$</span> python3 recall.py recent</p>
+          </div>
+          <a href="/docs/usage" class="mt-4 inline-block text-sm font-medium text-accent-600 hover:text-accent-700">
+            Full usage guide →
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Demo -->
+  <section class="border-b border-neutral-200 bg-neutral-50">
+    <div class="mx-auto max-w-6xl px-4 py-20 sm:px-6 lg:py-24">
+      <div class="max-w-2xl">
+        <p class="text-sm font-semibold uppercase tracking-wider text-neutral-400">
+          See it in action
+        </p>
+        <h2 class="mt-3 text-3xl font-bold tracking-tight text-neutral-900 sm:text-4xl">
+          Search, review, and reuse — from the terminal.
+        </h2>
+      </div>
+
+      <div class="mt-12 grid gap-6 lg:grid-cols-2">
+        <div class="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+          <img
+            src="/images/recall-demo.gif"
+            alt="Animated walkthrough of Recall search, Pi tools, and context banks"
+            class="w-full"
+            loading="lazy"
+          />
+          <div class="border-t border-neutral-200 px-5 py-4">
+            <p class="text-sm font-medium text-neutral-900">Search &amp; session tools</p>
+            <p class="mt-1 text-xs text-neutral-500">
+              Fuzzy, regex, and semantic search over every indexed session.
+            </p>
+          </div>
+        </div>
+        <div class="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+          <img
+            src="/images/context-review.svg"
+            alt="Recall reviewing an update to a context bank with Apply, Revise, and Cancel controls"
+            class="w-full"
+            loading="lazy"
+          />
+          <div class="border-t border-neutral-200 px-5 py-4">
+            <p class="text-sm font-medium text-neutral-900">Context bank review</p>
+            <p class="mt-1 text-xs text-neutral-500">
+              Every update is reviewed before it overwrites saved context.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Local / privacy band -->
+  <section class="border-b border-neutral-200 bg-neutral-900">
+    <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6">
+      <div class="max-w-3xl">
+        <p class="font-mono text-sm text-emerald-400"># local by default</p>
+        <h2 class="mt-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
+          Yours, on your machine.
+        </h2>
+        <p class="mt-4 text-lg leading-relaxed text-neutral-300">
+          Recall reads local transcripts and writes its index to{" "}
+          <code class="font-mono text-sm text-neutral-200">~/.recall/recall.db</code>.
+          Core indexing and search use only the Python standard library and
+          never send your conversations anywhere. Optional semantic search
+          downloads and runs an embedding model locally.
+        </p>
+      </div>
+      <div class="mt-10 grid gap-6 sm:grid-cols-3">
+        <div class="rounded-lg border border-white/10 p-5">
+          <h3 class="text-sm font-semibold text-white">Nothing uploaded</h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-400">
+            Your transcripts stay on disk. The index is local SQLite.
+          </p>
+        </div>
+        <div class="rounded-lg border border-white/10 p-5">
+          <h3 class="text-sm font-semibold text-white">Stdlib-only core</h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-400">
+            Indexing and search need no third-party packages at all.
+          </p>
+        </div>
+        <div class="rounded-lg border border-white/10 p-5">
+          <h3 class="text-sm font-semibold text-white">Local embeddings</h3>
+          <p class="mt-2 text-sm leading-relaxed text-neutral-400">
+            Optional semantic search runs the model on your machine.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Docs / blog CTA -->
+  <section class="border-b border-neutral-200">
+    <div class="mx-auto grid max-w-6xl gap-6 px-4 py-16 sm:px-6 md:grid-cols-2">
+      <a
+        href="/docs"
+        class="group rounded-xl border border-neutral-200 p-7 transition-colors hover:border-neutral-400"
+      >
+        <h3 class="text-lg font-semibold text-neutral-900">Read the docs</h3>
+        <p class="mt-2 text-sm text-neutral-600">
+          Installation, search, context banks, architecture, and releases.
+        </p>
+        <p class="mt-4 text-sm font-medium text-accent-600 group-hover:text-accent-700">
+          Browse documentation →
+        </p>
+      </a>
+      <a
+        href="/blog"
+        class="group rounded-xl border border-neutral-200 p-7 transition-colors hover:border-neutral-400"
+      >
+        <h3 class="text-lg font-semibold text-neutral-900">Read the blog</h3>
+        <p class="mt-2 text-sm text-neutral-600">
+          How Recall is built, and why it works the way it does.
+        </p>
+        <p class="mt-4 text-sm font-medium text-accent-600 group-hover:text-accent-700">
+          Browse the blog →
+        </p>
+      </a>
+    </div>
+  </section>
+</Base>

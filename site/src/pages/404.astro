@@ -1,0 +1,24 @@
+---
+import Base from '../layouts/Base.astro';
+---
+
+<Base title="Page not found — Recall" description="The page you are looking for could not be found.">
+  <div class="mx-auto flex max-w-3xl flex-col items-center px-4 py-24 text-center sm:px-6">
+    <p class="font-mono text-6xl font-bold text-neutral-200">404</p>
+    <h1 class="mt-4 text-2xl font-bold tracking-tight text-neutral-900">
+      This page doesn't exist.
+    </h1>
+    <p class="mt-3 max-w-md text-neutral-600">
+      The page you're looking for was moved, deleted, or never existed in the
+      first place.
+    </p>
+    <div class="mt-8 flex gap-3">
+      <a href="/" class="rounded-lg bg-neutral-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-neutral-700">
+        Go home
+      </a>
+      <a href="/docs" class="rounded-lg border border-neutral-300 px-5 py-2.5 text-sm font-medium text-neutral-900 hover:bg-neutral-50">
+        Read the docs
+      </a>
+    </div>
+  </div>
+</Base>

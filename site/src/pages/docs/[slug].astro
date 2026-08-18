@@ -1,0 +1,32 @@
+---
+import { getCollection, render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import DocLayout from '../../layouts/DocLayout.astro';
+import { getDocMeta } from '../../lib/docs-meta';
+
+export async function getStaticPaths() {
+  const docs = await getCollection('docs');
+  return docs.map((entry) => ({
+    params: { slug: entry.id },
+    props: { entry },
+  }));
+}
+
+const { entry } = Astro.props;
+const meta = getDocMeta(entry.id);
+const { Content } = await render(entry);
+
+const title = meta?.title ?? entry.id;
+const description = meta?.description ?? 'Recall documentation.';
+---
+
+<Base title={`${title} — Recall`} description={description}>
+  <DocLayout
+    title={title}
+    description={description}
+    currentSlug={entry.id}
+    githubPath={`${entry.id}.md`}
+  >
+    <Content />
+  </DocLayout>
+</Base>
