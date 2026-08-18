@@ -184,11 +184,13 @@ def search_fuzzy(conn, args):
     where, filter_params = _filters(args)
     where_sql = (" AND " + " AND ".join(where)) if where else ""
 
-    # Search is presented and resumed at session granularity, so term coverage
-    # must use that same unit. Build one candidate-session set per term and
-    # intersect them; the messages used for previews may then match any term.
-    # Sessions with a message containing every term are still ranked first.
-    term_ctes, cte_params = [], []
+    # Search is presented and resumed at session granularity: candidate
+    # sessions must cover every term group, possibly across different messages.
+    # Materialize that eligible set into a temp table with a PRIMARY KEY so the
+    # planner probes it with an index lookup. Joining an unindexed CTE set here
+    # degenerates into a nested-loop full FTS scan on SQLite versions that pick
+    # that plan (~100k × 100k at benchmark scale).
+    term_ctes, term_params = [], []
     for i, group_match in enumerate(group_matches):
         term_ctes.append(f"""
             term_{i} AS MATERIALIZED (
@@ -197,31 +199,42 @@ def search_fuzzy(conn, args):
                 JOIN messages m ON m.id = messages_fts.rowid
                 WHERE messages_fts MATCH ?{where_sql}
             )""")
-        cte_params.extend([group_match, *filter_params])
+        term_params.extend([group_match, *filter_params])
     eligible = " INTERSECT ".join(
         f"SELECT session_id, source FROM term_{i}" for i in range(len(term_ctes))
     )
+    conn.execute("DROP TABLE IF EXISTS _recall_eligible")
+    conn.execute("CREATE TEMP TABLE _recall_eligible("
+                 "session_id TEXT, source TEXT, PRIMARY KEY(session_id, source))")
+    conn.execute(
+        "INSERT OR IGNORE INTO _recall_eligible WITH "
+        + ",".join(term_ctes) + " " + eligible, term_params)
 
     # Rank inside each session before applying a global limit. Keep both the
     # strongest hit and the best conversational hit so previews avoid tool noise.
+    # ft_any materializes the FTS match once up front so the planner scans the
+    # FTS index a single time instead of once per candidate session.
     sql = f"""
-        WITH {','.join(term_ctes)},
-        eligible(session_id, source) AS MATERIALIZED ({eligible}),
-        co_located(rowid) AS MATERIALIZED (
+        WITH ft_all(rowid) AS MATERIALIZED (
             SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?
+        ),
+        ft_any AS MATERIALIZED (
+            SELECT messages_fts.rowid AS rid,
+                   snippet(messages_fts, 0, '{HL[0]}', '{HL[1]}', '…', 14) AS snip,
+                   bm25(messages_fts) AS raw_score
+            FROM messages_fts WHERE messages_fts MATCH ?
         ),
         matches AS MATERIALIZED (
             SELECT m.session_id, m.source, m.path, m.project, m.ts, m.epoch,
                    m.type, m.nl_text, COALESCE(f.present,1) AS present,
-                   snippet(messages_fts, 0, '{HL[0]}', '{HL[1]}', '…', 14) AS snip,
-                   bm25(messages_fts) AS raw_score,
+                   ft_any.snip, ft_any.raw_score,
                    CASE WHEN c.rowid IS NULL THEN 0 ELSE 1 END AS same_message
-            FROM messages_fts
-            JOIN messages m ON m.id = messages_fts.rowid
-            JOIN eligible e ON e.session_id = m.session_id AND e.source = m.source
-            LEFT JOIN co_located c ON c.rowid = m.id
+            FROM ft_any
+            JOIN messages m ON m.id = ft_any.rid
+            JOIN _recall_eligible e ON e.session_id = m.session_id AND e.source = m.source
+            LEFT JOIN ft_all c ON c.rowid = m.id
             LEFT JOIN files f ON f.path = m.path
-            WHERE messages_fts MATCH ?{where_sql}
+            WHERE 1=1{where_sql}
         ), ranked AS (
             SELECT *,
                    MAX(same_message) OVER (PARTITION BY session_id) AS has_same_message,
@@ -244,8 +257,7 @@ def search_fuzzy(conn, args):
         ORDER BY has_same_message DESC, raw_score
         LIMIT ?
     """
-    sql_params = [*cte_params, all_match, any_match, *filter_params,
-                  max(20, args.limit * 2)]
+    sql_params = [all_match, any_match, *filter_params, max(20, args.limit * 2)]
     return conn.execute(sql, sql_params).fetchall()
 
 
