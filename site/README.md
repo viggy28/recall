@@ -1,6 +1,6 @@
 # Recall website
 
-Marketing site, docs, and blog for **Recall** (askcontext.dev), built with
+Marketing site, docs, and blog for **Recall** (askrecall.dev), built with
 [Astro](https://astro.build) + [Tailwind CSS](https://tailwindcss.com).
 
 ## Develop
@@ -46,7 +46,7 @@ Deployed to **Cloudflare Pages** via Git integration (no repo secrets needed).
    - **Root directory:** `site`
    - **Build command:** `npm run build`
    - **Build output directory:** `dist`
-3. Attach the custom domain `askcontext.dev`.
+3. Attach the custom domain `askrecall.dev`.
 
 `.github/workflows/site-ci.yml` runs `npm run check` and `npm run build` on
 every PR that touches `site/`, so broken builds are caught before merge.

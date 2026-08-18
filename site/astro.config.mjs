@@ -4,7 +4,7 @@ import sitemap from '@astrojs/sitemap';
 
 // https://astro.build/config
 export default defineConfig({
-  site: 'https://askcontext.dev',
+  site: 'https://askrecall.dev',
   integrations: [sitemap()],
   vite: {
     plugins: [tailwindcss()],
