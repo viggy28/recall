@@ -7,10 +7,12 @@ on:
   pull_request:
     paths:
       - 'site/**'
+      - 'docs/**'
   push:
     branches: [main]
     paths:
       - 'site/**'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
