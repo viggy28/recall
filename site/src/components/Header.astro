@@ -4,84 +4,102 @@ const nav = [
   { href: '/blog', label: 'Blog' },
   { href: 'https://github.com/viggy28/recall', label: 'GitHub', external: true },
 ];
+
+const cell =
+  'flex items-center border-l border-line-soft px-[1.375rem] font-mono text-[0.78125rem] uppercase tracking-[0.08em] text-muted transition-colors hover-accent';
 ---
 
-<header
-  class="sticky top-0 z-50 border-b border-neutral-200 bg-white/80 backdrop-blur"
->
-  <div class="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
-    <a href="/" class="flex items-center gap-2" aria-label="Recall home">
-      <svg width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-        <rect width="32" height="32" rx="7" fill="#0a0a0a" />
-        <path
-          d="M12 9 L21 16 L12 23"
-          stroke="#fff"
-          stroke-width="3"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-        />
-      </svg>
-      <span class="text-[15px] font-semibold tracking-tight">Recall</span>
+<header class="sticky top-0 z-50 border-b border-line-soft bg-bg">
+  <div class="flex items-stretch justify-between px-6 md:px-10">
+    <a
+      href="/"
+      class="flex items-center py-[1.125rem] font-mono text-[0.9375rem] font-medium tracking-[0.02em] text-ink"
+      aria-label="Recall home"
+    >
+      recall<span class="text-accent">_</span>
     </a>
 
-    <nav class="hidden items-center gap-1 md:flex">
+    <nav class="hidden items-stretch md:flex">
       {nav.map((item) => (
         <a
           href={item.href}
-          class="rounded-md px-3 py-2 text-sm font-medium text-neutral-600 transition-colors hover:bg-neutral-100 hover:text-neutral-900"
+          class={cell}
           {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
         >
           {item.label}
         </a>
       ))}
+      <button type="button" data-theme-toggle class={`${cell} cursor-pointer`}>
+        <span class="theme-label-dark">[ dark ]<span class="sr-only"> — switch to dark theme</span></span>
+        <span class="theme-label-light">[ light ]<span class="sr-only"> — switch to light theme</span></span>
+      </button>
       <a
         href="/docs/usage"
-        class="ml-3 rounded-md bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white transition-colors hover:bg-neutral-700"
+        class="flex items-center border-l border-line-soft bg-accent px-[1.625rem] font-mono text-[0.78125rem] uppercase tracking-[0.08em] text-on-accent transition-colors hover:bg-btn-bg hover:text-btn-fg"
       >
         Install
       </a>
     </nav>
 
     <!-- Mobile menu -->
-    <div class="md:hidden">
-      <button
-        id="menu-toggle"
-        type="button"
-        class="rounded-md p-2 text-neutral-600 hover:bg-neutral-100"
-        aria-label="Toggle menu"
-        aria-expanded="false"
-        aria-controls="mobile-menu"
-      >
-        <svg id="menu-icon-open" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
-          <path d="M4 7h16M4 12h16M4 17h16" />
-        </svg>
-        <svg id="menu-icon-close" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" class="hidden" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18" />
-        </svg>
-      </button>
-    </div>
+    <button
+      id="menu-toggle"
+      type="button"
+      class="flex items-center border-l border-line-soft px-5 text-muted transition-colors hover-accent md:hidden"
+      aria-label="Toggle menu"
+      aria-expanded="false"
+      aria-controls="mobile-menu"
+    >
+      <svg id="menu-icon-open" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 7h16M4 12h16M4 17h16" />
+      </svg>
+      <svg id="menu-icon-close" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" class="hidden" aria-hidden="true">
+        <path d="M6 6l12 12M18 6L6 18" />
+      </svg>
+    </button>
   </div>
 
-  <div id="mobile-menu" class="hidden border-t border-neutral-200 bg-white md:hidden">
-    <nav class="flex flex-col gap-1 px-4 py-3">
+  <div id="mobile-menu" class="hidden border-t border-line-soft bg-bg md:hidden">
+    <nav class="flex flex-col">
       {nav.map((item) => (
         <a
           href={item.href}
-          class="rounded-md px-3 py-2 text-sm font-medium text-neutral-700 hover:bg-neutral-100"
+          class="border-b border-line-soft px-6 py-3.5 font-mono text-[0.78125rem] uppercase tracking-[0.08em] text-muted transition-colors hover-accent"
           {...(item.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
         >
           {item.label}
         </a>
       ))}
+      <button
+        type="button"
+        data-theme-toggle
+        class="cursor-pointer border-b border-line-soft px-6 py-3.5 text-left font-mono text-[0.78125rem] uppercase tracking-[0.08em] text-muted transition-colors hover-accent"
+      >
+        <span class="theme-label-dark">[ dark ]<span class="sr-only"> — switch to dark theme</span></span>
+        <span class="theme-label-light">[ light ]<span class="sr-only"> — switch to light theme</span></span>
+      </button>
       <a
         href="/docs/usage"
-        class="mt-1 rounded-md bg-neutral-900 px-3 py-2 text-center text-sm font-medium text-white"
+        class="bg-accent px-6 py-3.5 font-mono text-[0.78125rem] uppercase tracking-[0.08em] text-on-accent transition-colors hover:bg-btn-bg hover:text-btn-fg"
       >
         Install
       </a>
     </nav>
   </div>
 </header>
+
+<style>
+  /* ponytail: label swapped in CSS off the <html> attribute — no JS needed on
+     first paint, so the toggle can never flash the wrong word. */
+  .theme-label-light,
+  :global([data-theme='dark']) .theme-label-dark {
+    display: none;
+  }
+
+  :global([data-theme='dark']) .theme-label-light {
+    display: inline;
+  }
+</style>
 
 <script>
   const toggle = document.getElementById('menu-toggle');
@@ -95,5 +113,15 @@ const nav = [
     iconOpen?.classList.toggle('hidden', !isOpen);
     iconClose?.classList.toggle('hidden', isOpen);
     toggle?.setAttribute('aria-expanded', String(!isOpen));
+  });
+
+  document.querySelectorAll('[data-theme-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      document.documentElement.dataset.theme = next;
+      try {
+        localStorage.setItem('recall-theme', next);
+      } catch {}
+    });
   });
 </script>

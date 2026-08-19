@@ -1,48 +1,226 @@
 @import "tailwindcss";
 
-@theme {
-  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
-    sans-serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo,
-    Consolas, monospace;
+/* `static` so every token below is emitted as a CSS variable, even when only
+   referenced from hand-written CSS or from a [data-theme="dark"] override. */
+@theme static {
+  --font-sans: "Bricolage Grotesque Variable", ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    monospace;
 
-  /* A single restrained accent (violet), used sparingly over a black-and-white base. */
-  --color-accent-100: #ede9fe;
-  --color-accent-200: #ddd6fe;
-  --color-accent-300: #c4b5fd;
-  --color-accent-400: #a78bfa;
-  --color-accent-500: #8b5cf6;
-  --color-accent-600: #7c3aed;
-  --color-accent-700: #6d28d9;
+  /* Editorial / newsprint palette — one saturated blue accent over warm paper. */
+  --color-bg: #f5f1e8;
+  --color-panel: #fffdf7;
+  --color-ink: #1e1b14;
+  --color-muted: #6e6759;
+  /* Raised from the spec's #a39a87 (2.47:1) — that failed WCAG AA on ~20 real
+     text nodes. 4.55:1 on bg, 5.04:1 on panel, still dimmer than --color-muted. */
+  --color-faint: #756d5c;
+  --color-line: rgba(30, 27, 20, 0.38);
+  --color-line-soft: rgba(30, 27, 20, 0.25);
+  --color-rule: rgba(30, 27, 20, 0.045);
+  --color-accent: #2038c4;
+  --color-on-accent: #f5f1e8;
+  --color-code-bg: #1e1b14;
+  --color-code-fg: #f0ead9;
+  --color-code-muted: #8a8375;
+  --color-code-accent: #8fa0ff;
+  --color-btn-bg: #1e1b14;
+  --color-btn-fg: #f5f1e8;
+  --color-inverse-line: rgba(240, 234, 217, 0.2);
 }
 
-html {
-  scroll-behavior: smooth;
-  -webkit-text-size-adjust: 100%;
+:root {
+  color-scheme: light;
 }
 
-body {
-  font-family: var(--font-sans);
-  color: #0a0a0a;
-  background-color: #ffffff;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
+[data-theme="dark"] {
+  color-scheme: dark;
 }
 
-::selection {
-  background: #0a0a0a;
-  color: #ffffff;
+/* Non-color custom props (kept out of @theme so they don't collide with the
+   Tailwind --shadow-* namespace). Unlayered so they beat the theme layer. */
+:root {
+  --shadow-tint: rgba(30, 27, 20, 0.13);
+  --shadow-hard: rgba(30, 27, 20, 0.9);
+  --accent-shadow: rgba(32, 56, 196, 0.25);
+  --accent-dash: rgba(32, 56, 196, 0.35);
+  --accent-wash: rgba(32, 56, 196, 0.06);
 }
 
-/* Hero dot-grid backdrop */
-.hero-grid {
-  background-image: radial-gradient(circle at 1px 1px, #0a0a0a12 1px, transparent 0);
-  background-size: 28px 28px;
+[data-theme="dark"] {
+  --color-bg: #14120e;
+  --color-panel: #1d1a15;
+  --color-ink: #f0ead9;
+  --color-muted: #9a9182;
+  /* see the light-mode note: spec's #6d6555 was 3.25:1. This is 4.87/4.51. */
+  --color-faint: #8a8172;
+  --color-line: rgba(240, 234, 217, 0.3);
+  --color-line-soft: rgba(240, 234, 217, 0.2);
+  --color-rule: rgba(240, 234, 217, 0.05);
+  --color-accent: #8fa0ff;
+  --color-on-accent: #14120e;
+  --color-code-bg: #0b0a08;
+  --color-code-fg: #f0ead9;
+  --color-code-muted: #8a8375;
+  --color-code-accent: #8fa0ff;
+  --color-btn-bg: #f0ead9;
+  --color-btn-fg: #14120e;
+  --color-inverse-line: rgba(240, 234, 217, 0.2);
+
+  --shadow-tint: rgba(0, 0, 0, 0.5);
+  --shadow-hard: rgba(0, 0, 0, 0.85);
+  --accent-shadow: rgba(143, 160, 255, 0.3);
+  --accent-dash: rgba(143, 160, 255, 0.45);
+  --accent-wash: rgba(143, 160, 255, 0.08);
+}
+
+@layer base {
+  html {
+    /* ponytail: single zoom knob — every size in the site is rem-based
+       (except 1px/1.5px hairlines and the 1200px measure), so this scales
+       the whole design. 112.5% = 18px base. */
+    font-size: 112.5%;
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    color: var(--color-ink);
+    background-color: var(--color-bg);
+    /* 32px horizontal rule grid */
+    background-image: linear-gradient(var(--color-rule) 1px, transparent 1px);
+    background-size: 100% 32px;
+    line-height: 1.55;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+  }
+
+  a:hover {
+    color: var(--color-accent);
+  }
+
+  /* The default UA ring is invisible on bg-accent / bg-btn-bg / the inverted band. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  [class*="bg-code-bg"] :focus-visible {
+    outline-color: var(--color-code-accent);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
+
+@keyframes blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@layer components {
+  .shadow-tint {
+    box-shadow: 3px 4px 0 var(--shadow-tint);
+  }
+
+  .shadow-hard {
+    box-shadow: 6px 6px 0 var(--shadow-hard);
+  }
+
+  .shadow-accent {
+    box-shadow: 6px 6px 0 var(--accent-shadow);
+  }
+
+  .rule-grid {
+    background-image: linear-gradient(var(--color-rule) 1px, transparent 1px);
+    background-size: 100% 32px;
+  }
+
+  /* ponytail: no uppercase here — every consumer ("$ recall · …", "blog",
+     "docs") is frozen lowercase copy. `.tag` keeps the uppercase treatment. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    color: var(--color-accent);
+  }
+
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    border: 1px solid var(--color-ink);
+    padding: 5px 12px;
+  }
+
+  .paper-card {
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    box-shadow: 3px 4px 0 var(--shadow-tint);
+  }
+
+  .card-tilt-a {
+    transform: rotate(-0.6deg);
+  }
+
+  .card-tilt-b {
+    transform: rotate(0.5deg);
+  }
+
+  .card-tilt-c {
+    transform: rotate(-0.4deg);
+  }
+
+  .chip {
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    border: 1px solid var(--color-line);
+    padding: 7px 16px;
+    border-radius: 0;
+  }
+
+  .hover-accent:hover {
+    color: var(--color-accent);
+    background: var(--accent-wash);
+  }
+
+  @media (max-width: 640px) {
+    .card-tilt-a,
+    .card-tilt-b,
+    .card-tilt-c {
+      transform: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .card-tilt-a,
+    .card-tilt-b,
+    .card-tilt-c {
+      transform: none;
+    }
+  }
 }
 
 /* ---- Documentation / blog prose ---- */
 .prose-docs {
-  color: #262626;
+  color: var(--color-muted);
   line-height: 1.75;
   font-size: 1rem;
 }
@@ -53,26 +231,26 @@ body {
 
 .prose-docs h1 {
   font-size: 2rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: #0a0a0a;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  color: var(--color-ink);
   margin-top: 0;
 }
 
 .prose-docs h2 {
   font-size: 1.375rem;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  color: #0a0a0a;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-ink);
   margin-top: 2.5rem;
   padding-bottom: 0.5rem;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--color-line-soft);
 }
 
 .prose-docs h3 {
   font-size: 1.125rem;
-  font-weight: 600;
-  color: #0a0a0a;
+  font-weight: 700;
+  color: var(--color-ink);
   margin-top: 1.75rem;
 }
 
@@ -81,20 +259,20 @@ body {
 }
 
 .prose-docs strong {
-  font-weight: 600;
-  color: #0a0a0a;
+  font-weight: 700;
+  color: var(--color-ink);
 }
 
 .prose-docs a {
-  color: #7c3aed;
+  color: var(--color-accent);
   text-decoration: underline;
   text-underline-offset: 3px;
-  text-decoration-color: #c4b5fd;
+  text-decoration-color: var(--accent-dash);
   transition: text-decoration-color 0.15s ease;
 }
 
 .prose-docs a:hover {
-  text-decoration-color: #7c3aed;
+  text-decoration-color: var(--color-accent);
 }
 
 .prose-docs ul {
@@ -119,15 +297,15 @@ body {
 }
 
 .prose-docs blockquote {
-  border-left: 3px solid #0a0a0a;
+  border-left: 3px solid var(--color-accent);
   padding-left: 1rem;
-  color: #525252;
+  color: var(--color-muted);
   margin-top: 1rem;
 }
 
 .prose-docs hr {
   border: 0;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--color-line-soft);
   margin: 2rem 0;
 }
 
@@ -135,23 +313,24 @@ body {
 .prose-docs :not(pre) > code {
   font-family: var(--font-mono);
   font-size: 0.85em;
-  background: #f5f5f5;
-  border: 1px solid #e5e5e5;
-  border-radius: 0.375rem;
+  background: var(--accent-wash);
+  border: 1px solid var(--color-line-soft);
+  border-radius: 0;
   padding: 0.1em 0.35em;
-  color: #0a0a0a;
+  color: var(--color-ink);
 }
 
 /* Fenced code blocks */
 .prose-docs pre {
   margin-top: 1.25rem;
-  border-radius: 0.75rem;
+  border-radius: 0;
   overflow-x: auto;
-  background: #0a0a0a;
+  background: var(--color-code-bg) !important;
+  border: 1px solid var(--color-line);
   padding: 1rem 1.25rem;
   font-size: 0.85rem;
   line-height: 1.7;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  box-shadow: 3px 4px 0 var(--shadow-tint);
 }
 
 .prose-docs pre code {
@@ -172,12 +351,13 @@ body {
 
 .prose-docs th,
 .prose-docs td {
-  border: 1px solid #e5e5e5;
+  border: 1px solid var(--color-line-soft);
   padding: 0.5rem 0.75rem;
   text-align: left;
 }
 
 .prose-docs th {
-  background: #fafafa;
-  font-weight: 600;
+  background: var(--color-panel);
+  font-weight: 700;
+  color: var(--color-ink);
 }
