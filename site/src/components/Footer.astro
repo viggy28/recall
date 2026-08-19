@@ -2,18 +2,12 @@
 const year = new Date().getFullYear();
 ---
 
-<footer class="border-t border-neutral-200 bg-white">
-  <div class="mx-auto max-w-6xl px-4 py-14 sm:px-6">
-    <div class="grid gap-10 md:grid-cols-[1.5fr_1fr_1fr]">
-      <div>
-        <div class="flex items-center gap-2">
-          <svg width="24" height="24" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-            <rect width="32" height="32" rx="7" fill="#0a0a0a" />
-            <path d="M12 9 L21 16 L12 23" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <span class="text-[15px] font-semibold tracking-tight">Recall</span>
-        </div>
-        <p class="mt-4 max-w-xs text-sm leading-relaxed text-neutral-500">
+<footer class="border-t-[1.5px] border-ink">
+  <div class="mx-auto max-w-[1200px] px-6 pb-12 pt-16 sm:px-10">
+    <div class="grid gap-12 text-sm md:grid-cols-[2fr_1fr_1fr]">
+      <div class="grid max-w-[40ch] content-start gap-3.5">
+        <div class="font-mono text-[0.9375rem] font-medium tracking-tight">recall<span class="text-accent">_</span></div>
+        <p class="text-sm leading-relaxed text-muted">
           A local knowledge base built from your coding-agent sessions. Search,
           resume, and build on everything you have already done — nothing leaves
           your machine.
@@ -21,37 +15,37 @@ const year = new Date().getFullYear();
       </div>
 
       <div>
-        <h3 class="text-sm font-semibold text-neutral-900">Product</h3>
-        <ul class="mt-4 space-y-2.5 text-sm text-neutral-500">
-          <li><a href="/docs/usage" class="hover:text-neutral-900">Usage</a></li>
-          <li><a href="/docs/development" class="hover:text-neutral-900">Development</a></li>
-          <li><a href="/docs/releases" class="hover:text-neutral-900">Releases</a></li>
-          <li><a href="/blog" class="hover:text-neutral-900">Blog</a></li>
+        <h3 class="font-mono text-[0.6875rem] uppercase tracking-[0.12em] text-faint">Product</h3>
+        <ul class="mt-4 grid gap-3 text-muted">
+          <li><a href="/docs/usage">Usage</a></li>
+          <li><a href="/docs/development">Development</a></li>
+          <li><a href="/docs/releases">Releases</a></li>
+          <li><a href="/blog">Blog</a></li>
         </ul>
       </div>
 
       <div>
-        <h3 class="text-sm font-semibold text-neutral-900">Open source</h3>
-        <ul class="mt-4 space-y-2.5 text-sm text-neutral-500">
+        <h3 class="font-mono text-[0.6875rem] uppercase tracking-[0.12em] text-faint">Open source</h3>
+        <ul class="mt-4 grid gap-3 text-muted">
           <li>
-            <a href="https://github.com/viggy28/recall" target="_blank" rel="noopener noreferrer" class="hover:text-neutral-900">GitHub</a>
+            <a href="https://github.com/viggy28/recall" target="_blank" rel="noopener noreferrer">GitHub</a>
           </li>
           <li>
-            <a href="https://www.npmjs.com/package/recall-pi" target="_blank" rel="noopener noreferrer" class="hover:text-neutral-900">npm package</a>
+            <a href="https://www.npmjs.com/package/recall-pi" target="_blank" rel="noopener noreferrer">npm package</a>
           </li>
           <li>
-            <a href="https://github.com/viggy28/recall/issues" target="_blank" rel="noopener noreferrer" class="hover:text-neutral-900">Issues</a>
+            <a href="https://github.com/viggy28/recall/issues" target="_blank" rel="noopener noreferrer">Issues</a>
           </li>
           <li>
-            <a href="https://github.com/viggy28/recall/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer" class="hover:text-neutral-900">Changelog</a>
+            <a href="https://github.com/viggy28/recall/blob/main/CHANGELOG.md" target="_blank" rel="noopener noreferrer">Changelog</a>
           </li>
         </ul>
       </div>
     </div>
 
-    <div class="mt-12 flex flex-col gap-2 border-t border-neutral-200 pt-6 text-sm text-neutral-400 sm:flex-row sm:items-center sm:justify-between">
-      <p>&copy; {year} Recall. MIT licensed.</p>
-      <p class="font-mono text-xs">askrecall.dev</p>
+    <div class="mt-14 flex flex-wrap justify-between gap-4 font-mono text-xs text-faint">
+      <span>&copy; {year} Recall. MIT licensed.</span>
+      <span>askrecall.dev</span>
     </div>
   </div>
 </footer>

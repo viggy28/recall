@@ -7,36 +7,36 @@ import { docsMeta } from '../../lib/docs-meta';
   title="Documentation — Recall"
   description="Installation, usage, architecture, and release documentation for Recall, a local knowledge base for coding agents."
 >
-  <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 lg:py-20">
+  <div class="mx-auto max-w-[1200px] px-6 py-16 sm:px-10 lg:py-20">
     <div class="max-w-2xl">
-      <p class="font-mono text-sm text-neutral-400">docs</p>
-      <h1 class="mt-2 text-4xl font-bold tracking-tight text-neutral-900 sm:text-5xl">
+      <p class="eyebrow">docs</p>
+      <h1 class="mt-3 text-[clamp(2.375rem,5vw,3.75rem)] font-[750] leading-[1.02] tracking-[-0.03em] text-ink">
         Documentation
       </h1>
-      <p class="mt-4 text-lg leading-relaxed text-neutral-600">
+      <p class="mt-5 text-lg leading-relaxed text-muted">
         Everything you need to install, use, and contribute to Recall. These
         pages are generated from the same Markdown files in the{" "}
-        <a href="https://github.com/viggy28/recall/tree/main/docs" target="_blank" rel="noopener noreferrer" class="font-medium text-accent-600 hover:text-accent-700">
+        <a href="https://github.com/viggy28/recall/tree/main/docs" target="_blank" rel="noopener noreferrer" class="text-accent underline decoration-[var(--accent-dash)] underline-offset-4">
           repository
         </a>
         , so the website and the code stay in sync.
       </p>
     </div>
 
-    <div class="mt-12 grid gap-6 md:grid-cols-3">
+    <div class="mt-14 grid gap-px border border-line bg-line md:grid-cols-3">
       {docsMeta.map((doc, i) => (
         <a
           href={`/docs/${doc.slug}`}
-          class="group flex flex-col rounded-xl border border-neutral-200 p-7 transition-colors hover:border-neutral-400"
+          class="group flex flex-col bg-panel p-8 transition-colors hover:bg-[var(--accent-wash)]"
         >
-          <p class="font-mono text-sm text-neutral-400">{String(i + 1).padStart(2, '0')}</p>
-          <h2 class="mt-3 text-lg font-semibold text-neutral-900 group-hover:text-accent-700">
+          <p class="font-mono text-xs uppercase tracking-[0.14em] text-faint">{String(i + 1).padStart(2, '0')}</p>
+          <h2 class="mt-4 text-lg font-bold tracking-tight text-ink group-hover:text-accent">
             {doc.title}
           </h2>
-          <p class="mt-2 flex-1 text-sm leading-relaxed text-neutral-600">
+          <p class="mt-2 flex-1 text-sm leading-relaxed text-muted">
             {doc.description}
           </p>
-          <p class="mt-4 text-sm font-medium text-accent-600">Read →</p>
+          <p class="mt-6 font-mono text-xs text-accent">Read →</p>
         </a>
       ))}
     </div>
