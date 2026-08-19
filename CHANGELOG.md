@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/viggy28/recall/compare/v0.3.0...v0.3.1) (2026-08-19)
+
+
+### Bug Fixes
+
+* target cloudflare pages for site deploy ([f5eddc0](https://github.com/viggy28/recall/commit/f5eddc0ad6c5d6af1e078034b6524a552e3e0024))
+* target cloudflare pages for site deploy ([f4b8b03](https://github.com/viggy28/recall/commit/f4b8b03d5942188f7cbd4331e450f6513d132a3b))
+
 ## [0.3.0](https://github.com/viggy28/recall/compare/v0.2.0...v0.3.0) (2026-08-17)
 
 
