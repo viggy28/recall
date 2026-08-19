@@ -223,7 +223,7 @@ def build_embeddings(conn, quiet=False, rechunk=False):
             new_chunks.append((r["id"], r["session_id"], order, ck))
     if not new_chunks:
         if not quiet:
-            print("embeddings up to date")
+            print("embeddings up to date", file=sys.stderr)
         return
     cur = conn.executemany(
         "INSERT INTO chunks(message_id,session_id,ord,text) VALUES(?,?,?,?)", new_chunks)
@@ -235,7 +235,7 @@ def build_embeddings(conn, quiet=False, rechunk=False):
     texts = [r["text"] for r in pending]
     total = len(texts)
     if not quiet:
-        print(f"embedding {total} chunks with {EMBED_MODEL} …", flush=True)
+        print(f"embedding {total} chunks with {EMBED_MODEL} …", flush=True, file=sys.stderr)
     # Single process (one model in RAM) — ONNX Runtime still uses multiple
     # threads internally. Do NOT pass parallel>0/parallel=0: that spawns a
     # worker process per core, each loading its own model copy → OOM.
@@ -256,7 +256,7 @@ def build_embeddings(conn, quiet=False, rechunk=False):
             conn.commit()
             done += len(batch); batch = []
             if not quiet:
-                print(f"\r  {done}/{total} ({100*done//total}%)", end="", flush=True)
+                print(f"\r  {done}/{total} ({100*done//total}%)", end="", flush=True, file=sys.stderr)
     if batch:
         conn.executemany("INSERT OR REPLACE INTO embeddings(chunk_id,vec) VALUES(?,?)", batch)
         done += len(batch)
@@ -265,7 +265,17 @@ def build_embeddings(conn, quiet=False, rechunk=False):
         conn.execute("INSERT INTO embed_meta(model,dim) VALUES(?,?)", (EMBED_MODEL, dim))
     conn.commit()
     if not quiet:
-        print(f"\rstored {done} embeddings ({dim}d)" + " " * 12)
+        print(f"\rstored {done} embeddings ({dim}d)" + " " * 12, file=sys.stderr)
+
+
+def _pending_embed_count(conn):
+    """Messages with natural-language text but no chunk yet — i.e. not yet
+    covered by semantic search (embedded only when `recall index -s` runs)."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM messages m "
+        "LEFT JOIN chunks c ON c.message_id = m.id "
+        "WHERE c.id IS NULL AND m.nl_text IS NOT NULL AND m.nl_text != ''"
+    ).fetchone()[0]
 
 
 _EMB_CACHE = None   # (database/change identity, matrix data)
@@ -330,10 +340,15 @@ def _lexical_session_ranks(conn, args, cap=2000):
     return ranks
 
 
-def search_semantic(conn, args, k_rrf=60):
+def search_semantic(conn, args, k_rrf=60, warn=True):
     if not conn.execute("SELECT 1 FROM embeddings LIMIT 1").fetchone():
         print("no embeddings yet — run:  recall index -s", file=sys.stderr)
         return []
+    if warn:
+        stale = _pending_embed_count(conn)
+        if stale:
+            print(f"semantic index is {stale} messages behind — run:  recall index -s",
+                  file=sys.stderr)
     try:
         model, np = _load_embedder()
     except SemanticUnavailable as e:
@@ -1724,6 +1739,7 @@ def tui(conn, args):
     modes = ["fuzzy", "regex"] + (["semantic"] if has_embed else [])
     start = "regex" if getattr(args, "regex", False) else \
             "semantic" if getattr(args, "semantic", False) and has_embed else "fuzzy"
+    semantic_stale = _pending_embed_count(conn) if has_embed else 0
 
     def run(query, mode):
         if not query.strip():
@@ -1738,7 +1754,7 @@ def tui(conn, args):
             if mode == "regex":
                 rows = search_regex(conn, a)
             elif mode == "semantic":
-                rows = search_semantic(conn, a)
+                rows = search_semantic(conn, a, warn=False)
             else:
                 rows = search_fuzzy(conn, a)
         except Exception:
@@ -1911,6 +1927,8 @@ def tui(conn, args):
             draw_detail(scr, results[sel], dx, 2, dw, h - 1,
                         home, query, mode, dim, bold, hl)
         help = " ↑/↓ move · Enter resume · Tab mode · ⌫ edit · Esc quit"
+        if mode == "semantic" and semantic_stale:
+            help += " · semantic stale: recall index -s"
         scr.addnstr(h - 1, 0, help[:w - 1], w - 1, dim)
         scr.move(0, min(9 + len(query), w - 1))
         scr.refresh()
@@ -2200,6 +2218,8 @@ def main(argv=None):
         init_db(conn)
         if not args.no_index:
             index_all(conn, quiet=True)
+            if args.semantic and _pending_embed_count(conn):
+                build_embeddings(conn)
         tui(conn, args)
         return
 
@@ -2240,6 +2260,8 @@ def main(argv=None):
         init_db(conn)
         if not args.no_index:
             index_all(conn, quiet=True)
+            if args.semantic and _pending_embed_count(conn):
+                build_embeddings(conn)
         if args.regex:
             rows = search_regex(conn, args)
         elif args.semantic:
