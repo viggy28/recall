@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0](https://github.com/viggy28/recall/compare/v0.3.1...v0.4.0) (2026-08-20)
+
+
+### Features
+
+* **extension:** add knowledge graph browser to /recall dashboard ([e0dd62e](https://github.com/viggy28/recall/commit/e0dd62e30d2aaca91b922227a284f341dba36c65))
+* **graph:** add self-contained HTML graph explorer (--format html) ([241e8a3](https://github.com/viggy28/recall/commit/241e8a3b3426382a603ed41c19bfa0cb96a51e6f))
+* **graph:** precise entity extraction plus optional spaCy NER ([8a1e325](https://github.com/viggy28/recall/commit/8a1e32528980250ac7d0ec124d543cf06f109a3e))
+
 ## [0.3.1](https://github.com/viggy28/recall/compare/v0.3.0...v0.3.1) (2026-08-19)
 
 
