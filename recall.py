@@ -98,7 +98,7 @@ from recall_core.ingestion import (
 from recall_core.indexing import (
     SCHEMA, SOURCES, _levenshtein, _reindex_file, connect, index, init_db,
 )
-from recall_core.graph import build_graph, render_graph
+from recall_core.graph import NerUnavailable, build_graph, render_graph
 
 def index_all(conn, full=False, purge_missing=False, semantic=False, quiet=False):
     """Index every registered source, then build/refresh derived tables once."""
@@ -2078,7 +2078,11 @@ def main(argv=None):
     pgraph.add_argument("--project", help="filter: project path substring")
     pgraph.add_argument("--since", help="filter: on/after YYYY-MM-DD")
     pgraph.add_argument("--until", help="filter: on/before YYYY-MM-DD")
-    pgraph.add_argument("--entity-type", choices=["entity", "organization", "person", "topic"])
+    pgraph.add_argument("--entity-type",
+                        choices=["entity", "organization", "person", "topic",
+                                 "technology", "file", "reference"])
+    pgraph.add_argument("--ner", action="store_true",
+                        help="also run spaCy NER (pip install spacy && python -m spacy download en_core_web_sm)")
     pgraph.add_argument("--min-edge-weight", type=int, default=1,
                         help="minimum co-occurrences for an edge (default: 1)")
     pgraph.add_argument("--max-nodes", type=int, default=100,
@@ -2241,13 +2245,17 @@ def main(argv=None):
             index_all(conn, quiet=True)
         if args.max_nodes < 1 or args.min_edge_weight < 1:
             ap.error("--max-nodes and --min-edge-weight must be positive")
-        graph = build_graph(
-            conn, source=args.source, project=args.project,
-            since=_epoch(args.since + "T00:00:00Z") if args.since else None,
-            until=_epoch(args.until + "T23:59:59Z") if args.until else None,
-            entity_type=args.entity_type, min_edge_weight=args.min_edge_weight,
-            max_nodes=args.max_nodes,
-        )
+        try:
+            graph = build_graph(
+                conn, source=args.source, project=args.project,
+                since=_epoch(args.since + "T00:00:00Z") if args.since else None,
+                until=_epoch(args.until + "T23:59:59Z") if args.until else None,
+                entity_type=args.entity_type, min_edge_weight=args.min_edge_weight,
+                max_nodes=args.max_nodes, ner=args.ner,
+            )
+        except NerUnavailable as e:
+            print(str(e), file=sys.stderr)
+            raise SystemExit(1)
         rendered = render_graph(graph, args.format)
         if args.output:
             Path(args.output).write_text(rendered, encoding="utf-8")
