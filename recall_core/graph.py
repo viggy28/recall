@@ -321,6 +321,9 @@ def build_graph(conn, *, source=None, project=None, since=None, until=None,
 def render_graph(graph, output_format="json") -> str:
     if output_format == "json":
         return json.dumps(graph, indent=2, ensure_ascii=False) + "\n"
+    if output_format == "html":
+        from . import graph_html
+        return graph_html.render_html(graph)
     lines = ["graph recall {"]
     for node in graph["nodes"]:
         label = node["label"].replace('"', r'\"')

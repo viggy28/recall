@@ -2071,8 +2071,8 @@ def main(argv=None):
     pr.add_argument("--no-index", action="store_true", help="skip the auto incremental re-index")
 
     pgraph = sub.add_parser("graph", help="generate an entity co-occurrence knowledge graph")
-    pgraph.add_argument("--format", choices=["json", "dot"], default="json",
-                        help="output format (default: json)")
+    pgraph.add_argument("--format", choices=["json", "dot", "html"], default="json",
+                        help="output format: json, dot, or a self-contained html explorer (default: json)")
     pgraph.add_argument("-o", "--output", help="write to a file instead of stdout")
     pgraph.add_argument("--source", choices=["claude", "pi", "codex"], help="filter: harness")
     pgraph.add_argument("--project", help="filter: project path substring")
