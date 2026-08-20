@@ -50,6 +50,36 @@ type RecallResult = {
   similarity?: number | null;
 };
 
+type GraphReference = {
+  message_id: number;
+  session_id: string;
+  source: string;
+  path: string | null;
+  line_no: number | null;
+  timestamp: string | null;
+};
+
+type GraphNode = {
+  id: string;
+  label: string;
+  type: "entity" | "organization" | "person" | "topic";
+  mentions: number;
+  references: GraphReference[];
+};
+
+type GraphEdge = {
+  source: string;
+  target: string;
+  weight: number;
+  references: GraphReference[];
+};
+
+type RecallGraph = {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  meta: { messages_scanned: number; max_nodes: number; min_edge_weight: number };
+};
+
 function cleanLine(value: string | null | undefined, max = 110): string {
   const line = (value ?? "").replace(/\s+/g, " ").trim();
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
@@ -105,6 +135,33 @@ async function searchBackend(
 
 async function recentBackend(pi: ExtensionAPI, limit = 50, cwd?: string): Promise<RecallResult[]> {
   return JSON.parse(await runBackend(pi, ["recent", "--json", "--limit", String(limit)], undefined, cwd));
+}
+
+async function graphBackend(pi: ExtensionAPI, args: string[] = [], cwd?: string): Promise<RecallGraph> {
+  return JSON.parse(await runBackend(pi, ["graph", "--format", "json", ...args], undefined, cwd));
+}
+
+function nodeTypeColor(type: GraphNode["type"]): "accent" | "success" | "warning" | "text" {
+  switch (type) {
+    case "organization": return "accent";
+    case "person": return "success";
+    case "topic": return "warning";
+    default: return "text";
+  }
+}
+
+function adjacency(graph: RecallGraph): Map<string, { target: string; weight: number }[]> {
+  const adj = new Map<string, { target: string; weight: number }[]>();
+  const push = (from: string, to: string, weight: number) => {
+    const list = adj.get(from) ?? [];
+    list.push({ target: to, weight });
+    adj.set(from, list);
+  };
+  for (const edge of graph.edges) {
+    push(edge.source, edge.target, edge.weight);
+    push(edge.target, edge.source, edge.weight);
+  }
+  return adj;
 }
 
 async function choose<T>(
@@ -190,6 +247,89 @@ function padToWidth(line: string, width: number): string {
 
 function combinePanes(left: string, right: string, leftWidth: number, theme: any): string {
   return `${padToWidth(left, leftWidth)} ${theme.fg("dim", "│")} ${right}`;
+}
+
+async function browseGraph(ctx: ExtensionContext, graph: RecallGraph): Promise<GraphNode | null> {
+  if (ctx.mode !== "tui" || graph.nodes.length === 0) return null;
+  const adj = adjacency(graph);
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const order = [...graph.nodes].sort((a, b) =>
+    b.mentions - a.mentions || (adj.get(b.id)?.length ?? 0) - (adj.get(a.id)?.length ?? 0));
+
+  return ctx.ui.custom<GraphNode | null>((tui, theme, _keybindings, done) => {
+    let sel = 0;
+    let top = 0;
+    const visibleCount = Math.min(12, order.length);
+
+    const clamp = () => {
+      sel = Math.max(0, Math.min(sel, order.length - 1));
+      if (sel < top) top = sel;
+      if (sel >= top + visibleCount) top = sel - visibleCount + 1;
+      top = Math.max(0, Math.min(top, Math.max(0, order.length - visibleCount)));
+    };
+
+    const detailLines = (node: GraphNode, width: number): string[] => {
+      const color = nodeTypeColor(node.type);
+      const degree = adj.get(node.id)?.length ?? 0;
+      const neighbors = (adj.get(node.id) ?? []).sort((a, b) => b.weight - a.weight).slice(0, 10);
+      const lines: string[] = [];
+      lines.push(theme.fg(color, theme.bold(node.label)));
+      lines.push(theme.fg("dim", `${node.type} · ${node.mentions} mentions · ${degree} links`));
+      lines.push("");
+      lines.push(theme.fg("dim", "Connected"));
+      for (const neighbor of neighbors) {
+        const other = byId.get(neighbor.target);
+        const label = cleanLine(other?.label ?? neighbor.target, Math.max(8, width - 8));
+        lines.push(theme.fg(other ? nodeTypeColor(other.type) : "text", `  ${label}`)
+          + theme.fg("dim", `  ×${neighbor.weight}`));
+      }
+      lines.push("");
+      lines.push(theme.fg("dim", "Mentioned in"));
+      for (const ref of node.references.slice(0, 8)) {
+        const line = `  ${ref.session_id.slice(0, 8)} · ${ref.source} · ${ref.path ?? "?"}:${ref.line_no ?? "?"} · ${ref.timestamp?.slice(0, 10) ?? "unknown"}`;
+        lines.push(theme.fg("dim", truncateToWidth(line, Math.max(1, width - 2), "")));
+      }
+      return lines;
+    };
+
+    const render = (width: number): string[] => {
+      clamp();
+      const lines: string[] = [];
+      lines.push(theme.fg("accent", theme.bold("Knowledge graph"))
+        + theme.fg("dim", `  ${order.length} nodes · ${graph.edges.length} edges`));
+      const leftWidth = Math.min(42, Math.max(30, Math.floor(width * 0.4)));
+      const rightWidth = Math.max(1, width - leftWidth - 3);
+      const right = detailLines(order[sel], rightWidth);
+      const body: string[] = [];
+      for (let i = top; i < Math.min(order.length, top + visibleCount); i++) {
+        const node = order[i];
+        const prefix = i === sel ? theme.fg("accent", "›") : " ";
+        const titleText = cleanLine(node.label, Math.max(1, leftWidth - 8));
+        body.push(prefix + theme.fg(i === sel ? "accent" : nodeTypeColor(node.type), `${String(i + 1).padStart(2)} ${titleText}`));
+        body.push(theme.fg("dim", `     ${node.mentions}× · ${adj.get(node.id)?.length ?? 0} links`));
+      }
+      for (let i = 0; i < Math.max(body.length, right.length); i++) {
+        lines.push(combinePanes(body[i] ?? "", right[i] ?? "", leftWidth, theme));
+      }
+      lines.push(theme.fg("dim", "↑↓ move · enter search · esc close"));
+      return lines.map((line) => truncateToWidth(line, width, ""));
+    };
+
+    return {
+      render,
+      invalidate: () => {},
+      handleInput: (data: string) => {
+        if (matchesKey(data, Key.up)) sel--;
+        else if (matchesKey(data, Key.down)) sel++;
+        else if (matchesKey(data, "pageUp")) sel -= visibleCount;
+        else if (matchesKey(data, "pageDown")) sel += visibleCount;
+        else if (matchesKey(data, Key.enter)) return done(order[sel]);
+        else if (matchesKey(data, Key.escape)) return done(null);
+        clamp();
+        tui.requestRender();
+      },
+    };
+  });
 }
 
 async function chooseRecallResult(
@@ -1099,6 +1239,7 @@ async function recallDashboard(pi: ExtensionAPI, ctx: ExtensionCommandContext): 
     const action = await choose(ctx, "Recall", [
       { value: "search", label: "Search sessions", description: "Claude Code, Pi, and Codex transcripts" },
       { value: "recent", label: "Recent sessions", description: "Switch to another Pi session without leaving Pi" },
+      { value: "graph", label: "Knowledge graph", description: "Explore entities and their connections" },
       { value: "save-current", label: "Save current session as context", description: ctx.sessionManager.getSessionId() },
       { value: "contexts", label: "Manage contexts", description: "Attach, create, import, edit, export, or delete" },
       { value: "maintenance", label: "Index maintenance", description: "Update, semantic index, rebuild, purge, or status" },
@@ -1121,6 +1262,28 @@ async function recallDashboard(pi: ExtensionAPI, ctx: ExtensionCommandContext): 
     } else if (action === "recent") {
       try {
         if (await browseResults(pi, ctx, await recentBackend(pi, 50, ctx.cwd), "Recent sessions")) return;
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      }
+    } else if (action === "graph") {
+      const scope = await choose<string[]>(ctx, "Graph scope", [
+        { value: [], label: "All sessions" },
+        { value: ["--source", "pi"], label: "Pi sessions" },
+        { value: ["--source", "claude"], label: "Claude sessions" },
+        { value: ["--source", "codex"], label: "Codex sessions" },
+        { value: ["--entity-type", "organization"], label: "Organizations" },
+        { value: ["--entity-type", "person"], label: "People" },
+        { value: ["--entity-type", "topic"], label: "Topics" },
+      ]);
+      if (!scope) continue;
+      try {
+        const graph = await graphBackend(pi, scope, ctx.cwd);
+        if (graph.nodes.length === 0) {
+          ctx.ui.notify("No entities found in the selected scope", "warning");
+          continue;
+        }
+        const selected = await browseGraph(ctx, graph);
+        if (selected && await browseResults(pi, ctx, await searchBackend(pi, selected.label, "fuzzy", undefined, 20, undefined, ctx.cwd), `Recall: ${selected.label}`)) return;
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
