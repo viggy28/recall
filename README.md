@@ -68,8 +68,16 @@ dot -Tsvg graph.dot > graph.svg
 
 Available scopes include `--since`, `--until`, `--source`, `--project`, and
 `--entity-type`. Use `--max-nodes` and `--min-edge-weight` to keep dense graphs
-readable. Entity extraction is deliberately conservative; it recognizes capitalized
-names, acronyms, domains, `@people`, and `#topics` without sending content to a model.
+readable. Entity extraction is deterministic and dependency-free, and recognizes a
+small set of precise token classes rather than every capitalized word: `@people`,
+`#topics`, issue references (`#123`, `gh-123`), domains, file paths, and a curated
+technology gazetteer (Postgres, React, GraphQL, …). Add `--ner` to layer on spaCy
+named-entity recognition for people, organizations, and places in prose:
+
+```bash
+pip install spacy && python -m spacy download en_core_web_sm
+recall graph --ner
+```
 
 ## Context banks
 

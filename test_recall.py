@@ -179,27 +179,62 @@ class KnowledgeGraphTests(unittest.TestCase):
         recall.init_db(self.conn)
         rows = [
             ("/a", "s1", "pi", "/work/alpha", "user", "user", "2026-01-01", 10, 1,
-             "Open AI works with SQLite", "Open AI works with SQLite"),
+             "React works with SQLite in recall_core/graph.py",
+             "React works with SQLite in recall_core/graph.py"),
             ("/a", "s1", "pi", "/work/alpha", "assistant", "assistant", "2026-01-02", 20, 2,
-             "OpenAI.com and SQLite", "OpenAI.com and SQLite"),
+             "React, SQLite, and recall_core/graph.py again",
+             "React, SQLite, and recall_core/graph.py again"),
             ("/b", "s2", "codex", "/work/beta", "user", "user", "2026-02-01", 30, 1,
-             "NASA discusses #Space", "NASA discusses #Space"),
+             "OpenAI.com discusses #Space", "OpenAI.com discusses #Space"),
         ]
         self.conn.executemany(
             "INSERT INTO messages(path,session_id,source,project,role,type,ts,epoch,line_no,text,nl_text) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?)", rows)
 
-    def test_entity_extraction_normalizes_common_variants(self):
-        entities = extract_entities("Open AI met OpenAI.com about SQLite")
+    def test_entity_extraction_prefers_precise_token_classes(self):
+        entities = extract_entities("React and recall_core/graph.py #Space @viggy28 gh-123 OpenAI.com")
+        by_id = {entity["id"]: entity for entity in entities}
 
-        self.assertEqual([entity["id"] for entity in entities].count("openai"), 1)
-        self.assertIn("sqlite", {entity["id"] for entity in entities})
+        self.assertEqual(by_id["react"]["type"], "technology")
+        self.assertEqual(by_id["recall_core/graph.py"]["type"], "file")
+        self.assertEqual(by_id["space"]["type"], "topic")
+        self.assertEqual(by_id["viggy28"]["type"], "person")
+        self.assertEqual(by_id["gh123"]["type"], "reference")
+        self.assertEqual(by_id["openai"]["type"], "organization")
+
+    def test_numeric_hashtags_are_references_not_topics(self):
+        types = {entity["id"]: entity["type"] for entity in extract_entities("#53 and #Space")}
+
+        self.assertEqual(types["53"], "reference")
+        self.assertEqual(types["space"], "topic")
+
+    def test_at_mentions_distinguish_people_from_packages_and_decorators(self):
+        entities = extract_entities("@viggy28 thanked @anthropic/sdk and used @param and @README.md and @github")
+        by_id = {entity["id"]: entity for entity in entities}
+
+        self.assertEqual(by_id["viggy28"]["type"], "person")
+        self.assertEqual(by_id["anthropic"]["type"], "organization")
+        self.assertEqual(by_id["readme.md"]["type"], "file")
+        self.assertEqual(by_id["github"]["type"], "technology")
+        self.assertNotIn("param", by_id)
+
+    def test_hex_colors_and_list_markers_are_not_topics(self):
+        types = {entity["id"]: entity["type"] for entity in extract_entities("#0a0a0a #fff #1. #Space #DatabaseEngineering")}
+
+        self.assertNotIn("0a0a0a", types)
+        self.assertNotIn("fff", types)
+        self.assertEqual(types["1"], "reference")
+        self.assertEqual(types["space"], "topic")
+        self.assertEqual(types["databaseengineering"], "topic")
+
+    def test_capitalized_prose_words_are_not_entities(self):
+        self.assertEqual(extract_entities("Add the Files to Documents and Keep Best practices"), [])
 
     def test_graph_has_weighted_edges_and_source_references(self):
         graph = build_graph(self.conn)
         edge = next(edge for edge in graph["edges"]
-                    if {edge["source"], edge["target"]} == {"openai", "sqlite"})
-        node = next(node for node in graph["nodes"] if node["id"] == "openai")
+                    if {edge["source"], edge["target"]} == {"react", "sqlite"})
+        node = next(node for node in graph["nodes"] if node["id"] == "react")
 
         self.assertEqual(edge["weight"], 2)
         self.assertEqual(node["mentions"], 2)
@@ -209,14 +244,28 @@ class KnowledgeGraphTests(unittest.TestCase):
     def test_graph_filters_and_limits_entities(self):
         graph = build_graph(self.conn, source="codex", entity_type="organization", max_nodes=1)
 
-        self.assertEqual([node["id"] for node in graph["nodes"]], ["nasa"])
+        self.assertEqual([node["id"] for node in graph["nodes"]], ["openai"])
         self.assertEqual(graph["edges"], [])
 
     def test_dot_output_is_a_usable_undirected_graph(self):
         output = render_graph(build_graph(self.conn, min_edge_weight=2), "dot")
 
         self.assertIn("graph recall {", output)
-        self.assertIn('"openai" -- "sqlite" [weight=2', output)
+        self.assertIn('"react" -- "sqlite" [weight=2', output)
+
+    def test_ner_is_optional_and_reports_missing_dependency(self):
+        try:
+            import spacy  # noqa: F401
+        except ImportError:
+            pass
+        else:
+            self.skipTest("spaCy is installed")
+
+        from recall_core.graph import NerUnavailable, _ner_dependency_error
+
+        self.assertIn("spacy", _ner_dependency_error())
+        with self.assertRaises(NerUnavailable):
+            build_graph(self.conn, ner=True)
 
 
 class TuiPresentationTests(unittest.TestCase):
