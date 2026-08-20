@@ -79,6 +79,14 @@ pip install spacy && python -m spacy download en_core_web_sm
 recall graph --ner
 ```
 
+For an interactive explorer, render a self-contained HTML file (no server or
+network needed — open it directly in a browser):
+
+```bash
+recall graph --format html --output graph.html
+open graph.html
+```
+
 ## Context banks
 
 Context banks turn useful material from past conversations into reusable Markdown documents. Create, review, update, and attach them to future Pi sessions without moving your project context to a hosted service.

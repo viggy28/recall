@@ -253,6 +253,15 @@ class KnowledgeGraphTests(unittest.TestCase):
         self.assertIn("graph recall {", output)
         self.assertIn('"react" -- "sqlite" [weight=2', output)
 
+    def test_html_output_is_a_self_contained_explorer(self):
+        output = render_graph(build_graph(self.conn), "html")
+
+        self.assertIn("<!doctype html>", output)
+        self.assertIn("<svg", output)
+        self.assertIn("Recall graph", output)
+        self.assertIn('"react"', output)   # embedded graph data
+        self.assertNotIn("<script src", output)   # no external/CDN dependency
+
     def test_ner_is_optional_and_reports_missing_dependency(self):
         try:
             import spacy  # noqa: F401
