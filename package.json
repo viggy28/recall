@@ -1,6 +1,6 @@
 {
   "name": "recall-pi",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "A local knowledge base built from Claude Code, Codex, OpenCode, and Pi conversations",
   "repository": {
