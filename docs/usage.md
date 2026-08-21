@@ -154,8 +154,19 @@ Attach the events-db context before we continue the migration.
 Update the events-db context with the production rollout notes.
 ```
 
+Pi can also ground a new context in a repository directory when you explicitly supply the path:
+
+```text
+Create recall context for safe-notsafe from the source.
+~/source/github/viggy28/safe-not-safe
+```
+
+For source-aware create, Pi passes the supplied directory as `source_path`; Recall never guesses a path or silently uses Pi's current directory. Before touching the source directory, Recall shows the absolute lexical path, selected generation provider/model, fixed collection limits, and a disclosure, then asks permission. A symlinked root requires another confirmation for its canonical target. After generation, the normal Apply, Revise, Full editor, or Cancel review is a separate save decision. Revise reuses the already approved snapshot rather than reading the repository again.
+
 ## Privacy
 
-Recall reads transcript files and writes its SQLite index and Markdown contexts locally. Core indexing, fuzzy search, regex search, and context-bank management do not send transcript content over the network.
+Recall reads transcript files and writes its SQLite index and Markdown contexts locally. Core indexing, fuzzy search, regex search, and ordinary context-bank management do not send transcript content over the network.
+
+Source-aware context create is an explicit exception: only after you approve source inspection, Recall performs a bounded, read-only collection and sends the bounded file listing, omission metadata, selected source excerpts, and your instruction to the displayed Pi generation provider/model. It prefers Git-tracked files and otherwise uses bounded traversal; skips symlinks, secret-like files and high-confidence secret content, dependencies, generated output, and binaries; truncates oversized text excerpts to the disclosed per-file and total limits; and displays selected paths and omission/truncation counts before save approval. Filtering reduces accidental disclosure but cannot guarantee that source contains no sensitive information, so review the displayed path, provider/model, and selected-path summary carefully. Denying the initial approval performs no source stat, Git command, read, generation, or write.
 
 Optional semantic search downloads its configured embedding model through `fastembed`, runs it locally, and stores embeddings in the local database.

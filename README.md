@@ -35,7 +35,10 @@ The extension adds the `/recall` dashboard and the `recall_search` and `recall_c
 ```text
 Search my recent sessions for the retry backoff change.
 Attach my migration-safe-notsafe context before we continue.
+Create a safe-notsafe context from source at ~/source/github/viggy28/safe-not-safe.
 ```
+
+Source-aware context creation asks before bounded repository inspection, discloses which selected Pi provider/model receives source excerpts, and separately asks before saving. See the [usage and privacy guide](docs/usage.md#privacy).
 
 ### Standalone CLI
 
