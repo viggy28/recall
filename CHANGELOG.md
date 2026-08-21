@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/viggy28/recall/compare/v0.4.0...v0.5.0) (2026-08-21)
+
+
+### Features
+
+* create contexts from local source ([da54551](https://github.com/viggy28/recall/commit/da545517489236fc2360e460fdd58900331bd66a))
+
+
+### Bug Fixes
+
+* **graph:** make html explorer interactions work (click, drag, pan) ([b61af53](https://github.com/viggy28/recall/commit/b61af5333dce2c9321310b8e3f22997760642ab0))
+* **graph:** make html explorer interactions work (click, drag, pan) ([db24d65](https://github.com/viggy28/recall/commit/db24d6593206aa068170d9839fb934105a710c1c))
+
 ## [0.4.0](https://github.com/viggy28/recall/compare/v0.3.1...v0.4.0) (2026-08-20)
 
 
