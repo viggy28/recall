@@ -72,7 +72,7 @@ body { background: #0d1117; color: #e6edf3; font: 14px/1.5 -apple-system, BlinkM
 <div id="app">
   <div id="graph">
     <svg id="plot">
-      <g id="viewport"><g id="edges"></g><g id="nodes"></g><g id="labels"></g></g>
+      <g id="viewport"><g id="edges"></g><g id="nodes"></g></g>
     </svg>
     <div id="hint">drag to pan · scroll to zoom · drag a node to move · hover to focus · click for details</div>
   </div>
@@ -118,7 +118,6 @@ body { background: #0d1117; color: #e6edf3; font: 14px/1.5 -apple-system, BlinkM
   var viewport = document.getElementById("viewport");
   var edgeLayer = document.getElementById("edges");
   var nodeLayer = document.getElementById("nodes");
-  var labelLayer = document.getElementById("labels");
 
   // ---- Fruchterman-Reingold layout ----
   function layout() {
@@ -174,33 +173,39 @@ body { background: #0d1117; color: #e6edf3; font: 14px/1.5 -apple-system, BlinkM
     return !!(a && b && visibleNode(a) && visibleNode(b));
   }
 
-  var focus = null, selected = null;
-  function neighborhood(id) {
-    var set = new Set([id]);
-    (adj.get(id) || []).forEach(function (nb) { set.add(nb.id); });
-    return set;
+  // ---- persistent DOM (built once, mutated cheaply) ----
+  var nodeEls = new Map();       // id -> { g, c, label, r }
+  var edgeEls = [];              // { line, source, target, baseOpacity }
+  var nodeEdgeIndex = new Map(); // id -> [edgeEl, ...]
+  var selected = null;
+
+  function positionEdge(el) {
+    var a = byId.get(el.source), b = byId.get(el.target);
+    el.line.setAttribute("x1", a.x);
+    el.line.setAttribute("y1", a.y);
+    el.line.setAttribute("x2", b.x);
+    el.line.setAttribute("y2", b.y);
   }
 
-  function render() {
-    edgeLayer.textContent = ""; nodeLayer.textContent = ""; labelLayer.textContent = "";
+  function rebuild() {
+    edgeLayer.textContent = ""; nodeLayer.textContent = "";
+    nodeEls.clear(); edgeEls = []; nodeEdgeIndex.clear();
+    nodes.forEach(function (n) { nodeEdgeIndex.set(n.id, []); });
     var maxW = Math.max(1, Math.max.apply(null, edges.map(function (e) { return e.weight; })));
-    var focusSet = focus ? neighborhood(focus) : null;
 
     edges.forEach(function (e) {
       if (!visibleEdge(e)) return;
-      var a = byId.get(e.source), b = byId.get(e.target);
       var line = document.createElementNS(NS, "line");
-      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
-      line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
       line.setAttribute("stroke", "#3d444d");
       line.setAttribute("stroke-width", (0.4 + (e.weight / maxW) * 2.5).toFixed(2));
-      var op = 0.18 + (e.weight / maxW) * 0.55;
-      if (focusSet) {
-        var touches = focusSet.has(e.source) || focusSet.has(e.target);
-        op = touches ? 0.9 : 0.03;
-      }
-      line.setAttribute("opacity", op.toFixed(3));
+      var el = { line: line, source: e.source, target: e.target,
+                 baseOpacity: 0.18 + (e.weight / maxW) * 0.55 };
+      line.setAttribute("opacity", el.baseOpacity.toFixed(3));
+      edgeEls.push(el);
+      nodeEdgeIndex.get(e.source).push(el);
+      nodeEdgeIndex.get(e.target).push(el);
       edgeLayer.appendChild(line);
+      positionEdge(el);
     });
 
     nodes.forEach(function (n) {
@@ -210,36 +215,68 @@ body { background: #0d1117; color: #e6edf3; font: 14px/1.5 -apple-system, BlinkM
       var r = radiusOf(n);
       c.setAttribute("r", r);
       c.setAttribute("fill", colorOf(n));
-      var op = 0.85;
-      if (focusSet) op = focusSet.has(n.id) ? 1 : 0.12;
-      c.setAttribute("opacity", op.toFixed(2));
-      c.setAttribute("stroke", selected === n.id ? "#f0f6fc" : "#0d1117");
-      c.setAttribute("stroke-width", selected === n.id ? "2.5" : "1");
+      c.setAttribute("opacity", "0.85");
+      c.setAttribute("stroke", "#0d1117");
+      c.setAttribute("stroke-width", "1");
+      g.appendChild(c);
       g.setAttribute("transform", "translate(" + n.x + "," + n.y + ")");
       g.style.cursor = "grab";
-      g.addEventListener("mouseenter", function () { focus = n.id; render(); });
-      g.addEventListener("mouseleave", function () { focus = null; render(); });
-      g.addEventListener("click", function (ev) { ev.stopPropagation(); select(n.id); });
-      g.addEventListener("mousedown", function (ev) { ev.stopPropagation(); startNodeDrag(ev, n); });
-      g.appendChild(c);
-      nodeLayer.appendChild(g);
 
-      var showLabel = selected === n.id || n.mentions >= 8 || focus === n.id;
-      if (showLabel) {
-        var t = document.createElementNS(NS, "text");
-        t.setAttribute("x", n.x);
-        t.setAttribute("y", n.y - r - 4);
-        t.setAttribute("text-anchor", "middle");
-        t.setAttribute("font-size", Math.min(13, 8 + n.mentions / 12));
-        t.setAttribute("fill", selected === n.id ? "#f0f6fc" : "#c9d1d9");
-        t.textContent = n.label;
-        labelLayer.appendChild(t);
+      var label = document.createElementNS(NS, "text");
+      label.setAttribute("x", 0);
+      label.setAttribute("y", -r - 4);
+      label.setAttribute("text-anchor", "middle");
+      label.setAttribute("font-size", Math.min(13, 8 + n.mentions / 12));
+      label.setAttribute("fill", "#c9d1d9");
+      label.textContent = n.label;
+      label.style.display = (n.mentions >= 8) ? "" : "none";
+      g.appendChild(label);
+
+      g.addEventListener("mouseenter", function () { applyFocus(n.id); });
+      g.addEventListener("mouseleave", function () { applyFocus(null); });
+      g.addEventListener("click", function (ev) { ev.stopPropagation(); if (!didDrag) select(n.id); });
+      g.addEventListener("mousedown", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        startNodeDrag(ev, n);
+      });
+
+      nodeLayer.appendChild(g);
+      nodeEls.set(n.id, { g: g, c: c, label: label, r: r });
+    });
+  }
+
+  function neighborhood(id) {
+    var set = new Set([id]);
+    (adj.get(id) || []).forEach(function (nb) { set.add(nb.id); });
+    return set;
+  }
+
+  function applyFocus(id) {
+    var focusSet = id ? neighborhood(id) : null;
+    nodeEls.forEach(function (el, nid) {
+      var op = 0.85;
+      if (focusSet) op = (focusSet.has(nid) || nid === selected) ? 1 : 0.12;
+      el.c.setAttribute("opacity", op.toFixed(2));
+      var show = nid === selected || byId.get(nid).mentions >= 8 || nid === id;
+      el.label.style.display = show ? "" : "none";
+    });
+    edgeEls.forEach(function (el) {
+      var op = el.baseOpacity;
+      if (focusSet) {
+        var touches = focusSet.has(el.source) || focusSet.has(el.target);
+        op = touches ? 0.9 : 0.03;
       }
+      el.line.setAttribute("opacity", op.toFixed(3));
     });
   }
 
   function select(id) {
     selected = id;
+    nodeEls.forEach(function (el, nid) {
+      el.c.setAttribute("stroke", nid === id ? "#f0f6fc" : "#0d1117");
+      el.c.setAttribute("stroke-width", nid === id ? "2.5" : "1");
+    });
     var n = byId.get(id);
     var panel = document.getElementById("panel-body");
     var neighbors = (adj.get(id) || []).slice().sort(function (a, b) { return b.weight - a.weight; }).slice(0, 12);
@@ -261,11 +298,9 @@ body { background: #0d1117; color: #e6edf3; font: 14px/1.5 -apple-system, BlinkM
     panel.querySelectorAll("a[data-id]").forEach(function (a) {
       a.addEventListener("click", function (ev) {
         ev.preventDefault();
-        focus = a.dataset.id;
         select(a.dataset.id);
       });
     });
-    render();
   }
 
   // ---- pan / zoom / node drag ----
@@ -280,32 +315,37 @@ body { background: #0d1117; color: #e6edf3; font: 14px/1.5 -apple-system, BlinkM
     return { x: (sx - t.x) / t.k, y: (sy - t.y) / t.k };
   }
 
-  var dragNode = null, dragOff = null, panning = false, panStart = null;
+  var dragging = null, dragOff = null, didDrag = false;
+  var panning = false, panStart = null;
+
   function startNodeDrag(ev, n) {
-    ev.preventDefault();
-    dragNode = n;
+    dragging = n.id;
+    didDrag = false;
     var p = toLayout(ev.clientX, ev.clientY);
     dragOff = { x: p.x - n.x, y: p.y - n.y };
   }
+
   window.addEventListener("mousemove", function (ev) {
-    if (dragNode) {
+    if (dragging) {
+      var n = byId.get(dragging);
       var p = toLayout(ev.clientX, ev.clientY);
-      dragNode.x = p.x - dragOff.x;
-      dragNode.y = p.y - dragOff.y;
-      render();
+      var nx = p.x - dragOff.x, ny = p.y - dragOff.y;
+      if (Math.abs(nx - n.x) + Math.abs(ny - n.y) > 1) didDrag = true;
+      n.x = nx; n.y = ny;
+      var el = nodeEls.get(n.id);
+      el.g.setAttribute("transform", "translate(" + nx + "," + ny + ")");
+      (nodeEdgeIndex.get(n.id) || []).forEach(positionEdge);
     } else if (panning) {
       t.x = panStart.tx + (ev.clientX - panStart.x);
       t.y = panStart.ty + (ev.clientY - panStart.y);
       applyTransform();
     }
   });
-  window.addEventListener("mouseup", function () { dragNode = null; panning = false; });
+  window.addEventListener("mouseup", function () { dragging = null; panning = false; });
 
   svg.addEventListener("mousedown", function (ev) {
-    if (ev.target === svg || ev.target === viewport) {
-      panning = true;
-      panStart = { x: ev.clientX, y: ev.clientY, tx: t.x, ty: t.y };
-    }
+    panning = true;
+    panStart = { x: ev.clientX, y: ev.clientY, tx: t.x, ty: t.y };
   });
   svg.addEventListener("wheel", function (ev) {
     ev.preventDefault();
@@ -326,11 +366,11 @@ body { background: #0d1117; color: #e6edf3; font: 14px/1.5 -apple-system, BlinkM
   weightSlider.addEventListener("input", function () {
     state.minWeight = Number(weightSlider.value);
     document.getElementById("min-weight-val").textContent = weightSlider.value;
-    render();
+    rebuild();
   });
   document.getElementById("search").addEventListener("input", function (ev) {
     state.search = ev.target.value.trim().toLowerCase();
-    render();
+    rebuild();
   });
   var legend = document.getElementById("legend");
   Object.keys(COLORS).forEach(function (type) {
@@ -339,7 +379,7 @@ body { background: #0d1117; color: #e6edf3; font: 14px/1.5 -apple-system, BlinkM
     cb.type = "checkbox"; cb.checked = true;
     cb.addEventListener("change", function () {
       if (cb.checked) state.types.add(type); else state.types.delete(type);
-      render();
+      rebuild();
     });
     label.appendChild(cb);
     var dot = document.createElement("span");
@@ -351,7 +391,7 @@ body { background: #0d1117; color: #e6edf3; font: 14px/1.5 -apple-system, BlinkM
 
   document.getElementById("counts").textContent = nodes.length + " nodes · " + edges.length + " edges";
   layout();
-  render();
+  rebuild();
   applyTransform();
 })();
 </script>
