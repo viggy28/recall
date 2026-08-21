@@ -11,6 +11,7 @@ const requiredFiles = [
   'pyproject.toml',
   'requirements-semantic.txt',
   'extensions/recall/index.ts',
+  'extensions/recall/source-collector.ts',
   'README.md',
 ];
 
@@ -20,6 +21,7 @@ const requiredDeclarations = [
   'pyproject.toml',
   'requirements-semantic.txt',
   'extensions/recall/index.ts',
+  'extensions/recall/source-collector.ts',
   'README.md',
 ];
 

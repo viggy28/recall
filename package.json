@@ -25,12 +25,17 @@
     "pyproject.toml",
     "requirements-semantic.txt",
     "extensions/recall/index.ts",
+    "extensions/recall/source-collector.ts",
     "docs/*.md",
     "docs/*.svg",
     "docs/recall-demo.gif",
     "docs/recall-demo.tape",
     "README.md"
   ],
+  "scripts": {
+    "test:collector": "node --experimental-strip-types --test extensions/recall/source-collector.test.ts extensions/recall/source-create.test.ts",
+    "typecheck": "tsc --project tsconfig.recall.json"
+  },
   "pi": {
     "extensions": [
       "./extensions/recall/index.ts"
@@ -42,5 +47,9 @@
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*",
     "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^7.0.2"
   }
 }

@@ -6,7 +6,8 @@
     "strict": true,
     "skipLibCheck": true,
     "types": ["node"],
-    "noEmit": true
+    "noEmit": true,
+    "allowImportingTsExtensions": true
   },
-  "include": ["extensions/recall/index.ts"]
+  "include": ["extensions/recall/index.ts", "extensions/recall/source-collector.ts", "extensions/recall/source-collector.test.ts", "extensions/recall/source-create.test.ts"]
 }
