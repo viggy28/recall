@@ -770,7 +770,7 @@ class ContextBankTests(unittest.TestCase):
         args = SimpleNamespace(name="project", session=None, source=str(source), blank=False,
                                focus="Architecture", general=False, model=None, dry_run=False,
                                yes=True, force=False, draft_only=True, json=True,
-                               source_device=None, source_inode=None)
+                               source_device=None, source_inode=None, include_snapshot=True)
         out = io.StringIO()
         with mock.patch.object(recall, "collect_source_snapshot", return_value=snapshot), \
                 mock.patch.object(recall, "_run_pi_generation", return_value="# project\n\n## Architecture\n\nSupported.") as generate, \
@@ -781,6 +781,28 @@ class ContextBankTests(unittest.TestCase):
         prompt = generate.call_args.args[0]
         self.assertIn("## Selected evidence", prompt)
         self.assertLessEqual(len(prompt), SOURCE_MAX_EVIDENCE_CHARS)
+        self.assertEqual(__import__("json").loads(out.getvalue())["source_snapshot"], snapshot)
+
+    def test_source_revision_reuses_snapshot_without_recollecting_directory(self):
+        conn = self._generation_db()
+        snapshot = {
+            "files": [{"path": "README.md", "content": "Approved", "bytes": 8, "truncated": False}],
+            "listing": ["README.md"], "skipped": [], "bytesRead": 8,
+        }
+        snapshot_path = Path(self.tmp.name) / "snapshot.json"
+        snapshot_path.write_text(__import__("json").dumps(snapshot), encoding="utf-8")
+        args = SimpleNamespace(name="project", session=None, source=None, snapshot_file=str(snapshot_path),
+                               blank=False, focus="Revised architecture", general=False, model=None,
+                               dry_run=False, yes=True, force=False, draft_only=True, json=True,
+                               include_snapshot=False)
+        out = io.StringIO()
+        with mock.patch.object(recall, "collect_source_snapshot") as collect, \
+                mock.patch.object(recall, "_run_pi_generation", return_value="# project\n\n## Architecture\n\nApproved."), \
+                redirect_stdout(out):
+            recall._context_create_evidence(conn, args)
+
+        collect.assert_not_called()
+        self.assertIn("Approved", __import__("json").loads(out.getvalue())["draft"])
 
     def _generation_db(self):
         conn = sqlite3.connect(":memory:")

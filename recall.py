@@ -101,7 +101,7 @@ from recall_core.indexing import (
 from recall_core.graph import NerUnavailable, build_graph, render_graph
 from recall_core.context_creation import (
     DISCOVERY_PAGE_SIZE, collect_source_snapshot, discover_sessions, final_generation_prompt,
-    lexical_source_path, map_generation_prompt, source_disclosure,
+    lexical_source_path, load_source_snapshot, map_generation_prompt, source_disclosure,
     source_generation_prompt, validate_draft,
 )
 
@@ -1521,7 +1521,8 @@ def _context_create_evidence(conn, args) -> Path | None:
 
     prefixes = list(args.session or [])
     source_value = args.source
-    if not prefixes and not source_value:
+    snapshot_file = getattr(args, "snapshot_file", None)
+    if not prefixes and not source_value and not snapshot_file:
         if not sys.stdin.isatty():
             raise ContextError("context creation requires --session ID, --source PATH, or --blank")
         prefixes, source_value, blank = _interactive_creation_source(conn, args.name)
@@ -1539,38 +1540,44 @@ def _context_create_evidence(conn, args) -> Path | None:
     chunks: list[str]
     compacted = 0
 
-    if source_value:
-        lexical = lexical_source_path(source_value)
-        print(source_disclosure(lexical, model_label), file=status_out)
-        if not args.yes:
-            if not sys.stdin.isatty():
-                raise ContextError("source inspection requires approval")
-            if input("Inspect this source directory? [y/N] ").strip().lower() not in ("y", "yes"):
-                print("not created; source was not accessed.")
-                return None
-        try:
-            canonical = lexical.resolve(strict=True)
-        except OSError as e:
-            raise ContextError(f"cannot access source directory: {e}") from None
-        if canonical != lexical and not args.yes:
-            if input(f"Source resolves to {canonical}. Inspect this target? [y/N] ").strip().lower() not in ("y", "yes"):
-                print("not created; source was not inspected.")
-                return None
-        try:
-            approved_stat = canonical.stat()
-        except OSError as e:
-            raise ContextError(f"cannot verify approved source directory: {e}") from None
-        expected_identity = (
-            (args.source_device, args.source_inode)
-            if getattr(args, "source_device", None) is not None and getattr(args, "source_inode", None) is not None
-            else (approved_stat.st_dev, approved_stat.st_ino)
-        )
-        try:
-            source_snapshot = collect_source_snapshot(
-                lexical, expected_canonical=canonical, expected_identity=expected_identity,
+    if source_value or snapshot_file:
+        if source_value:
+            lexical = lexical_source_path(source_value)
+            print(source_disclosure(lexical, model_label), file=status_out)
+            if not args.yes:
+                if not sys.stdin.isatty():
+                    raise ContextError("source inspection requires approval")
+                if input("Inspect this source directory? [y/N] ").strip().lower() not in ("y", "yes"):
+                    print("not created; source was not accessed.")
+                    return None
+            try:
+                canonical = lexical.resolve(strict=True)
+            except OSError as e:
+                raise ContextError(f"cannot access source directory: {e}") from None
+            if canonical != lexical and not args.yes:
+                if input(f"Source resolves to {canonical}. Inspect this target? [y/N] ").strip().lower() not in ("y", "yes"):
+                    print("not created; source was not inspected.")
+                    return None
+            try:
+                approved_stat = canonical.stat()
+            except OSError as e:
+                raise ContextError(f"cannot verify approved source directory: {e}") from None
+            expected_identity = (
+                (args.source_device, args.source_inode)
+                if getattr(args, "source_device", None) is not None and getattr(args, "source_inode", None) is not None
+                else (approved_stat.st_dev, approved_stat.st_ino)
             )
-        except (OSError, ValueError) as e:
-            raise ContextError(str(e)) from None
+            try:
+                source_snapshot = collect_source_snapshot(
+                    lexical, expected_canonical=canonical, expected_identity=expected_identity,
+                )
+            except (OSError, ValueError) as e:
+                raise ContextError(str(e)) from None
+        else:
+            try:
+                source_snapshot = load_source_snapshot(Path(snapshot_file))
+            except (OSError, ValueError) as e:
+                raise ContextError(f"cannot reuse approved source snapshot: {e}") from None
         if not source_snapshot["files"]:
             raise ContextError("no safe text source files were selected from the approved directory")
         chunks = [source_generation_prompt(args.name, focus, source_snapshot)]
@@ -1626,7 +1633,10 @@ def _context_create_evidence(conn, args) -> Path | None:
             raise ContextError(f"generated context exceeds {MAX_CONTEXT_CHARS:,} characters")
         if getattr(args, "draft_only", False):
             if getattr(args, "json", False):
-                print(json.dumps({"draft": markdown, "focus": focus, "sessions": [s["session_id"] for s in sessions]}))
+                payload = {"draft": markdown, "focus": focus, "sessions": [s["session_id"] for s in sessions]}
+                if source_snapshot is not None and getattr(args, "include_snapshot", False):
+                    payload["source_snapshot"] = source_snapshot
+                print(json.dumps(payload))
             else:
                 sys.stdout.write(markdown)
             return None
@@ -2172,6 +2182,7 @@ def main(argv=None):
                         help="indexed session ID or unique prefix (repeatable)")
     source.add_argument("--source", metavar="PATH", help="repository directory to inspect after approval")
     source.add_argument("--blank", action="store_true", help="create an empty Markdown template")
+    source.add_argument("--snapshot-file", help=argparse.SUPPRESS)
     lens = pcc.add_mutually_exclusive_group()
     lens.add_argument("--focus", help="theme/lens for evidence synthesis")
     lens.add_argument("--general", action="store_true", help="create a general durable project context")
@@ -2183,6 +2194,7 @@ def main(argv=None):
     pcc.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     pcc.add_argument("--source-device", type=int, help=argparse.SUPPRESS)
     pcc.add_argument("--source-inode", type=int, help=argparse.SUPPRESS)
+    pcc.add_argument("--include-snapshot", action="store_true", help=argparse.SUPPRESS)
 
     pdisc = csub.add_parser("discover", help="search indexed context sources as JSON")
     pdisc.add_argument("query")

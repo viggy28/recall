@@ -1,6 +1,6 @@
-import { chmod, mkdir, readFile, readdir, realpath, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -885,6 +885,8 @@ async function selectContextFocus(ctx: ExtensionContext, supplied?: string): Pro
   return focus?.trim() || null;
 }
 
+type BackendContextDraft = { draft: string; source_snapshot?: unknown };
+
 async function backendContextDraft(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -894,14 +896,16 @@ async function backendContextDraft(
   sourcePath: string | undefined,
   signal?: AbortSignal,
   sourceIdentity?: { dev: number; ino: number },
-): Promise<string> {
+  snapshotPath?: string,
+): Promise<BackendContextDraft> {
   const args = ["context", "create", name, "--focus", focus, "--yes", "--draft-only", "--json"];
   for (const id of sessions) args.push("--session", id);
-  if (sourcePath) args.push("--source", sourcePath);
+  if (sourcePath) args.push("--source", sourcePath, "--include-snapshot");
+  if (snapshotPath) args.push("--snapshot-file", snapshotPath);
   if (sourceIdentity) args.push("--source-device", String(sourceIdentity.dev), "--source-inode", String(sourceIdentity.ino));
   if (ctx.model) args.push("--model", `${ctx.model.provider}/${ctx.model.id}`);
   const output = await runBackend(pi, args, signal, ctx.cwd);
-  return (JSON.parse(output) as { draft: string }).draft;
+  return JSON.parse(output) as BackendContextDraft;
 }
 
 async function createContextFromCanonicalBackend(
@@ -962,27 +966,42 @@ async function createContextFromCanonicalBackend(
     sourceIdentity = { dev: info.dev, ino: info.ino };
   }
 
-  let draft = await backendContextDraft(pi, ctx, name, focus, sessions ?? [], approvedSourcePath, signal, sourceIdentity);
-  while (true) {
-    const action = await reviewContextText(ctx, `Create ${name}`, draft, true);
-    if (action === "cancel") return { status: "cancelled" };
-    if (action === "revise") {
-      const revised = await ctx.ui.editor(`Revise the focus for ${name}`, focus);
-      if (revised?.trim()) {
-        focus = revised.trim();
-        draft = await backendContextDraft(pi, ctx, name, focus, sessions ?? [], approvedSourcePath, signal, sourceIdentity);
+  const initial = await backendContextDraft(pi, ctx, name, focus, sessions ?? [], approvedSourcePath, signal, sourceIdentity);
+  let draft = initial.draft;
+  let snapshotDirectory: string | undefined;
+  let snapshotPath: string | undefined;
+  if (initial.source_snapshot !== undefined) {
+    snapshotDirectory = await mkdtemp(join(tmpdir(), "recall-context-snapshot-"));
+    snapshotPath = join(snapshotDirectory, "snapshot.json");
+    await writeFile(snapshotPath, JSON.stringify(initial.source_snapshot), { encoding: "utf8", mode: 0o600 });
+  }
+  try {
+    while (true) {
+      const action = await reviewContextText(ctx, `Create ${name}`, draft, true);
+      if (action === "cancel") return { status: "cancelled" };
+      if (action === "revise") {
+        const revised = await ctx.ui.editor(`Revise the focus for ${name}`, focus);
+        if (revised?.trim()) {
+          focus = revised.trim();
+          const regenerated = await backendContextDraft(
+            pi, ctx, name, focus, sessions ?? [], undefined, signal, undefined, snapshotPath,
+          );
+          draft = regenerated.draft;
+        }
+        continue;
       }
-      continue;
+      if (action === "editor") {
+        const edited = await ctx.ui.editor(`Edit proposed ${name}`, draft);
+        if (edited === undefined) continue;
+        draft = edited;
+        continue;
+      }
+      await saveContext(name, draft);
+      ctx.ui.notify(`Created and verified ${path}`, "info");
+      return { status: "created", path };
     }
-    if (action === "editor") {
-      const edited = await ctx.ui.editor(`Edit proposed ${name}`, draft);
-      if (edited === undefined) continue;
-      draft = edited;
-      continue;
-    }
-    await saveContext(name, draft);
-    ctx.ui.notify(`Created and verified ${path}`, "info");
-    return { status: "created", path };
+  } finally {
+    if (snapshotDirectory) await rm(snapshotDirectory, { recursive: true, force: true });
   }
 }
 

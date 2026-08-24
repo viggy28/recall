@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat as stat_module
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,7 +22,17 @@ SOURCE_MAX_EVIDENCE_CHARS = 120_000
 _EXCLUDED_DIRS = {".git", ".hg", ".svn", ".aws", ".azure", ".kube", ".docker", "secrets", "secret", "node_modules", "vendor", ".venv", "venv", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".next", ".nuxt", ".astro", "dist", "build", "target", "coverage", ".coverage", ".cache", "tmp", "temp", "pods", "deriveddata"}
 _SECRET_NAME = re.compile(r"^(?:\.env(?:\..*)?|\.envrc|\.npmrc|\.pypirc|\.netrc|credentials(?:\..*)?|tokens?(?:\..*)?|application_default_credentials\.json|service[-_]?account(?:[-_.].*)?\.json|terraform\.tfstate(?:\..*)?|.*\.tfvars(?:\.json)?|id_(?:rsa|dsa|ecdsa|ed25519)(?:\.pub)?|.*\.(?:pem|key|p12|pfx|jks|keystore))$", re.I)
 _BINARY = re.compile(r"\.(?:png|jpe?g|gif|webp|ico|bmp|tiff?|pdf|woff2?|ttf|eot|mp[34]|mov|avi|mkv|wav|flac|zip|gz|tgz|bz2|xz|7z|rar|tar|jar|war|class|pyc|pyo|so|dylib|dll|exe|wasm|sqlite3?|db|lock)$", re.I)
-_SECRET_CONTENT = re.compile(r"(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:api[_-]?key|secret|token|password)\s*[:=]\s*['\"]?[A-Za-z0-9_\-/+=]{16,})", re.I)
+_SECRET_CONTENT = (
+    re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\b(?:ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{20,}\b"),
+    re.compile(
+        r"(?:^|[^A-Za-z0-9])(?:[A-Za-z0-9_]*(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|secret[_-]?access[_-]?key))"
+        r"\s*[:=]\s*['\"]?[A-Za-z0-9_+\/=.-]{16,}['\"]?",
+        re.I | re.M,
+    ),
+)
 
 
 def _terms(query: str) -> list[str]:
@@ -155,6 +166,10 @@ def _excluded(rel: str) -> bool:
     return sensitive_path or any(part.lower() in _EXCLUDED_DIRS for part in parts[:-1]) or bool(_SECRET_NAME.match(parts[-1])) or bool(_BINARY.search(parts[-1]))
 
 
+def _contains_secret(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _SECRET_CONTENT)
+
+
 def _source_priority(rel: str) -> tuple[int, str]:
     lower = rel.lower()
     base = lower.rsplit("/", 1)[-1]
@@ -168,6 +183,38 @@ def _source_priority(rel: str) -> tuple[int, str]:
     if lower.startswith("extensions/"): return (5, rel)
     if lower.startswith(("test/", "tests/", "spec/", "__tests__/")) or re.search(r"(?:test|spec)\.[^.]+$", base): return (6, rel)
     return (7, rel)
+
+
+def _read_source_file(path: Path, root: Path, root_identity: tuple[int, int]) -> bytes:
+    """Open one source file without following a replacement symlink."""
+    root_stat = os.lstat(root)
+    if stat_module.S_ISLNK(root_stat.st_mode) or not stat_module.S_ISDIR(root_stat.st_mode) \
+            or (root_stat.st_dev, root_stat.st_ino) != root_identity:
+        raise OSError("approved source directory changed during collection")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        opened = os.fstat(fd)
+        if not stat_module.S_ISREG(opened.st_mode):
+            raise OSError("source path is not a regular file")
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(root)
+        current = os.stat(resolved, follow_symlinks=False)
+        if (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
+            raise OSError("source file changed during collection")
+        chunks, remaining = [], SOURCE_MAX_FILE_BYTES + 1
+        while remaining:
+            chunk = os.read(fd, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        after = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino):
+            raise OSError("source file changed during collection")
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
 
 
 def collect_source_snapshot(root: Path, expected_canonical: Path | None = None, expected_identity: tuple[int, int] | None = None) -> dict[str, Any]:
@@ -235,12 +282,9 @@ def collect_source_snapshot(root: Path, expected_canonical: Path | None = None, 
             skipped.append({"path": rel, "reason": "file-limit"}); continue
         path = canonical / rel
         try:
-            resolved = path.resolve(strict=True)
-            resolved.relative_to(canonical)
-            if resolved != path or path.is_symlink() or not path.is_file():
-                skipped.append({"path": rel, "reason": "non-regular"}); continue
-            with path.open("rb") as fh:
-                raw = fh.read(SOURCE_MAX_FILE_BYTES + 1)
+            raw = _read_source_file(
+                path, canonical, (initial_stat.st_dev, initial_stat.st_ino),
+            )
         except ValueError:
             skipped.append({"path": rel, "reason": "outside-root"}); continue
         except OSError:
@@ -248,7 +292,7 @@ def collect_source_snapshot(root: Path, expected_canonical: Path | None = None, 
         if b"\0" in raw[:8192]:
             skipped.append({"path": rel, "reason": "binary"}); continue
         text = raw[:SOURCE_MAX_FILE_BYTES].decode("utf-8", "replace")
-        if _SECRET_CONTENT.search(text):
+        if _contains_secret(text):
             skipped.append({"path": rel, "reason": "secret-content"}); continue
         encoded = text.encode("utf-8")
         if total + len(encoded) > SOURCE_MAX_TOTAL_BYTES:
@@ -259,6 +303,52 @@ def collect_source_snapshot(root: Path, expected_canonical: Path | None = None, 
     if (initial_stat.st_dev, initial_stat.st_ino) != (final_stat.st_dev, final_stat.st_ino):
         raise ValueError(f"approved source directory changed during collection: {canonical}")
     return {"root": str(canonical), "mode": mode, "listing": bounded_candidates, "files": files, "skipped": skipped, "bytesRead": total}
+
+
+def load_source_snapshot(path: Path) -> dict[str, Any]:
+    """Load a previously approved in-memory snapshot from a private adapter file."""
+    import json
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        info = os.fstat(fd)
+        if not stat_module.S_ISREG(info.st_mode):
+            raise ValueError("source snapshot is not a regular file")
+        chunks, remaining = [], SOURCE_MAX_EVIDENCE_CHARS * 4 + 1
+        while remaining:
+            chunk = os.read(fd, min(64 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > SOURCE_MAX_EVIDENCE_CHARS * 4:
+            raise ValueError("source snapshot exceeds the adapter limit")
+    finally:
+        os.close(fd)
+    try:
+        snapshot = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise ValueError("source snapshot is not valid JSON") from None
+    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("files"), list) \
+            or not isinstance(snapshot.get("listing"), list) or not isinstance(snapshot.get("skipped"), list):
+        raise ValueError("source snapshot has an invalid structure")
+    files = snapshot["files"]
+    if len(files) > SOURCE_MAX_FILES:
+        raise ValueError("source snapshot exceeds the file limit")
+    total = 0
+    for item in files:
+        if not isinstance(item, dict) or not isinstance(item.get("path"), str) \
+                or not isinstance(item.get("content"), str):
+            raise ValueError("source snapshot contains an invalid file")
+        encoded = item["content"].encode("utf-8")
+        if len(encoded) > SOURCE_MAX_FILE_BYTES * 3:
+            raise ValueError("source snapshot exceeds the per-file decoded-text limit")
+        total += len(encoded)
+    if total > SOURCE_MAX_TOTAL_BYTES:
+        raise ValueError("source snapshot exceeds the total byte limit")
+    snapshot["bytesRead"] = total
+    return snapshot
 
 
 def source_generation_prompt(name: str, focus: str | None, snapshot: dict[str, Any]) -> str:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from recall_core.context_creation import (
     SOURCE_MAX_EVIDENCE_CHARS, SOURCE_MAX_PATH_BYTES, collect_source_snapshot,
-    lexical_source_path, source_disclosure, source_generation_prompt,
+    lexical_source_path, load_source_snapshot, source_disclosure, source_generation_prompt,
 )
 
 
@@ -27,12 +27,23 @@ class SourceCollectionTests(unittest.TestCase):
             self.assertNotIn("TOKEN=secret", str(snapshot))
 
     def test_skips_high_confidence_secret_content(self):
+        secrets = {
+            "assignment.txt": "api_key = 'abcdefghijklmnop1234'",
+            "dsa.txt": "-----BEGIN DSA PRIVATE KEY-----",
+            "github.txt": "ghp_abcdefghijklmnopqrstuvwxyz123456",
+            "aws.txt": "AKIAABCDEFGHIJKLMNOP",
+            "slack.txt": "xoxb-12345678901234567890",
+        }
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "config.txt").write_text("api_key = 'abcdefghijklmnop1234'", encoding="utf-8")
+            for name, content in secrets.items():
+                (root / name).write_text(content, encoding="utf-8")
             snapshot = collect_source_snapshot(root)
             self.assertEqual(snapshot["files"], [])
-            self.assertIn("secret-content", {item["reason"] for item in snapshot["skipped"]})
+            self.assertEqual(
+                sum(item["reason"] == "secret-content" for item in snapshot["skipped"]),
+                len(secrets),
+            )
 
     def test_skips_common_credentials_and_sensitive_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -56,6 +67,33 @@ class SourceCollectionTests(unittest.TestCase):
                 (root / "link.txt").symlink_to(outside)
                 snapshot = collect_source_snapshot(root)
                 self.assertEqual(snapshot["files"], [])
+            finally:
+                outside.unlink(missing_ok=True)
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW") and hasattr(os, "symlink"), "requires O_NOFOLLOW")
+    def test_replacement_symlink_is_not_followed_during_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            source = root / "README.md"
+            source.write_text("safe", encoding="utf-8")
+            outside = root.parent / f"outside-{root.name}.txt"
+            outside.write_text("outside secret", encoding="utf-8")
+            real_open = os.open
+            replaced = False
+
+            def replace_then_open(path, flags, *args, **kwargs):
+                nonlocal replaced
+                if Path(path) == source and not replaced:
+                    replaced = True
+                    source.unlink()
+                    source.symlink_to(outside)
+                return real_open(path, flags, *args, **kwargs)
+
+            try:
+                with mock.patch("recall_core.context_creation.os.open", side_effect=replace_then_open):
+                    snapshot = collect_source_snapshot(root)
+                self.assertEqual(snapshot["files"], [])
+                self.assertNotIn("outside secret", str(snapshot))
             finally:
                 outside.unlink(missing_ok=True)
 
@@ -151,6 +189,20 @@ class SourceCollectionTests(unittest.TestCase):
             path.write_text("text", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "not a directory"):
                 collect_source_snapshot(path)
+
+    def test_loads_private_approved_snapshot_without_source_access(self):
+        import json
+        snapshot = {
+            "listing": ["README.md"],
+            "files": [{"path": "README.md", "content": "safe", "bytes": 4, "truncated": False}],
+            "skipped": [], "bytesRead": 4,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "snapshot.json"
+            path.write_text(json.dumps(snapshot), encoding="utf-8")
+            os.chmod(path, 0o600)
+            loaded = load_source_snapshot(path)
+        self.assertEqual(loaded["files"], snapshot["files"])
 
     def test_rejects_source_identity_changed_after_approval(self):
         with tempfile.TemporaryDirectory() as tmp:
