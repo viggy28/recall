@@ -128,45 +128,63 @@ export RECALL_PYTHON=/absolute/path/to/venv/bin/python
 
 ## Context banks
 
-Context banks are plain Markdown files that can be reviewed, revised, reused, imported, and exported.
+Context banks are plain Markdown files created from selected evidence and an explicit focus. Recall never treats a context name or short description as project evidence.
 
 ```bash
-recall context create events-db "Track the durable state and open questions for the Events DB"
+# Interactive: search the existing local index, select one or more sessions,
+# then choose General context or enter a custom focus.
+recall context create streambed-internals
+
+# Explicit indexed sessions (repeat --session).
+recall context create streambed-internals \
+  --session 019fcf9a \
+  --session 019fd039 \
+  --focus "Architecture, code paths, invariants, constraints, and technical debt"
+
+# Explicit repository evidence, inspected only after approval.
+recall context create streambed-marketing \
+  --source ~/source/github/acme/streambed \
+  --focus "Positioning, target users, value proposition, and proof points"
+
+# The only from-scratch creation path.
 recall context create scratch --blank
+
 recall context list
-recall context show events-db
-recall context path events-db
-recall context update events-db "The migration is complete; remove the resolved question."
-recall context undo events-db
-recall context import ./handoff.md --name events-db
-recall context export events-db ./events-db.md
-recall context delete events-db --force
-recall context generate events-db --session <session-id-prefix>
+recall context show streambed-internals
+recall context update streambed-internals "The migration is complete."
+recall context undo streambed-internals
+recall context import ./handoff.md --name imported-handoff
+recall context export streambed-internals ./streambed-internals.md
+recall context delete streambed-internals --force
 ```
 
-`context create` and `context update` accept natural-language instructions, show a focused preview, and offer Apply, Revise, Full editor, or Cancel. Use `create --blank` for an empty template. For model-free update scripts, repeat `--replace OLD NEW`.
+With no source flag in a terminal, `context create` searches already-indexed session titles and messages locally. It shows five ranked matches at a time and supports show-more, refined search, and comma-separated multi-selection. Creation never triggers indexing. In non-interactive use, select `--session`, `--source`, or `--blank` explicitly.
 
-In Pi, the `recall_context` tool provides the same review flow. You can ask naturally:
+Focus is a synthesis lens, not evidence. It is included in every chunk summary and the final synthesis so separate contexts can reuse the same sessions for different purposes. The standard Current state/Decisions/Constraints/Open questions/References structure is a default; focused contexts may use a more appropriate Markdown structure.
+
+Model-backed creation separates two decisions: first approve sending the displayed evidence to the displayed provider/model, then review the generated draft and separately Apply, Revise focus, use the Full editor, or Cancel. `context update` keeps its focused diff review. For model-free update scripts, repeat `--replace OLD NEW`.
+
+In Pi, the `recall_context` tool uses the same Python creation engine and adds Pi-native source selection and review UI. Ask naturally:
 
 ```text
-Create an events-db context that tracks durable state and open questions.
-Attach the events-db context before we continue the migration.
-Update the events-db context with the production rollout notes.
+Create a Streambed internals context focused on implementation details.
+Attach the streambed-internals context.
+Update the streambed-internals context with the rollout notes.
 ```
 
-Pi can also ground a new context in a repository directory when you explicitly supply the path:
+For repository-aware creation, provide the path explicitly. Recall never guesses a path or silently substitutes Pi's current directory:
 
 ```text
-Create recall context for safe-notsafe from the source.
-~/source/github/viggy28/safe-not-safe
+Create a Streambed marketing context from the source, focused on positioning and value proposition.
+~/source/github/acme/streambed
 ```
 
-For source-aware create, Pi passes the supplied directory as `source_path`; Recall never guesses a path or silently uses Pi's current directory. Before touching the source directory, Recall shows the absolute lexical path, selected generation provider/model, fixed collection limits, and a disclosure, then asks permission. A symlinked root requires another confirmation for its canonical target. After generation, the normal Apply, Revise, Full editor, or Cancel review is a separate save decision. Revise reuses the already approved snapshot rather than reading the repository again.
+Before touching a repository directory, Recall shows its absolute lexical path, generation provider/model, fixed collection limits, and disclosure. A symlinked root requires confirmation of its canonical target. Revise reuses the approved bounded snapshot rather than reading the repository again.
 
 ## Privacy
 
-Recall reads transcript files and writes its SQLite index and Markdown contexts locally. Core indexing, fuzzy search, regex search, and ordinary context-bank management do not send transcript content over the network.
+Recall reads transcript files and writes its SQLite index and Markdown contexts locally. Core indexing, fuzzy search, regex search, discovery, blank creation, and ordinary context-bank management do not send transcript content over the network. Session-backed creation sends only the selected transcript evidence after the displayed transmission approval.
 
-Source-aware context create is an explicit exception: only after you approve source inspection, Recall performs a bounded, read-only collection and sends the bounded file listing, omission metadata, selected source excerpts, and your instruction to the displayed Pi generation provider/model. It prefers Git-tracked files and otherwise uses bounded traversal; skips symlinks, secret-like files and high-confidence secret content, dependencies, generated output, and binaries; truncates oversized text excerpts to the disclosed per-file and total limits; and displays selected paths and omission/truncation counts before save approval. Filtering reduces accidental disclosure but cannot guarantee that source contains no sensitive information, so review the displayed path, provider/model, and selected-path summary carefully. Denying the initial approval performs no source stat, Git command, read, generation, or write.
+Repository-backed context creation is another explicit exception: only after you approve source inspection, Recall performs a bounded, read-only collection and sends the bounded file listing, omission metadata, selected source excerpts, and focus to the displayed Pi generation provider/model. It prefers Git-tracked files and otherwise uses bounded traversal; skips symlinks, secret-like files and high-confidence secret content, dependencies, generated output, and binaries; truncates oversized text excerpts to the disclosed per-file and total limits; and displays selected paths and omission/truncation counts before save approval. Filtering reduces accidental disclosure but cannot guarantee that source contains no sensitive information, so review the displayed path, provider/model, and selected-path summary carefully. Denying the initial approval performs no source stat, Git command, read, generation, or write.
 
 Optional semantic search downloads its configured embedding model through `fastembed`, runs it locally, and stores embeddings in the local database.

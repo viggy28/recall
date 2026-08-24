@@ -67,6 +67,7 @@ The `recall.py` module and CLI remain the compatibility facade. The data lifecyc
 - `recall_core.ingestion` discovers Claude Code, Pi, and Codex transcripts and normalizes their records into a shared message shape.
 - `recall_core.indexing` owns the SQLite schema, FTS5 indexes, connections, and incremental persistence.
 - `recall_core.retrieval` owns query filters, fuzzy and regular-expression search, ranking, and match-preview formatting.
+- `recall_core.context_creation` is the canonical source-first creation engine: local session discovery/ranking, focus-aware prompts, flexible draft validation, and bounded repository evidence collection. The CLI calls it directly; the Pi extension uses the backend's JSON discovery/draft protocol and only adapts source selection, approvals, and review rendering.
 
 Semantic embedding and CLI/TUI orchestration currently remain in the facade. Keeping them there avoids changing optional-dependency loading and the public module surface while the core is separated into subsystems.
 

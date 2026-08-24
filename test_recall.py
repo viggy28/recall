@@ -15,6 +15,7 @@ from unittest import mock
 
 import recall
 from recall_core import indexing
+from recall_core.context_creation import SOURCE_MAX_EVIDENCE_CHARS
 from recall_core.graph import build_graph, extract_entities, render_graph
 
 
@@ -425,30 +426,6 @@ class ContextBankTests(unittest.TestCase):
         with self.assertRaisesRegex(recall.ContextError, "already exists"):
             recall._context_create("events-db")
 
-    def test_natural_create_is_one_reviewed_operation(self):
-        response = """# Project\n\n## Current state\n\n- Ready.\n\n## Decisions\n\n## Constraints\n\n## Open questions\n\n## References"""
-        args = SimpleNamespace(name="project", instruction="Track project readiness.",
-                               instruction_file=None, model=None, blank=False,
-                               dry_run=False, yes=True, force=False)
-        out = io.StringIO()
-
-        with mock.patch.object(recall, "_run_pi_generation", return_value=response), redirect_stdout(out):
-            path = recall._context_create_natural(args)
-
-        self.assertIn("Generating a context draft", out.getvalue())
-        self.assertIn("- Ready.", path.read_text(encoding="utf-8"))
-
-    def test_natural_create_dry_run_does_not_write(self):
-        response = """# Project\n## Current state\n## Decisions\n## Constraints\n## Open questions\n## References"""
-        args = SimpleNamespace(name="project", instruction="Track readiness.",
-                               instruction_file=None, model=None, blank=False,
-                               dry_run=True, yes=False, force=False)
-
-        with mock.patch.object(recall, "_run_pi_generation", return_value=response):
-            self.assertIsNone(recall._context_create_natural(args))
-
-        self.assertFalse(recall._context_path("project").exists())
-
     def test_context_name_rejects_paths_and_invalid_names(self):
         for name in ("../events", "Events", "events_db", "-events", "events-", "a" * 65):
             with self.subTest(name=name), self.assertRaises(recall.ContextError):
@@ -638,6 +615,173 @@ class ContextBankTests(unittest.TestCase):
         self.assertEqual(path.read_text(encoding="utf-8"), original)
         self.assertFalse(recall._context_backup_path("project").exists())
 
+    def test_context_discovery_command_never_indexes(self):
+        conn = self._generation_db()
+        out = io.StringIO()
+        with mock.patch.object(recall, "connect", return_value=conn), \
+                mock.patch.object(recall, "index_all") as index_all, redirect_stdout(out):
+            recall.main(["context", "discover", "markdown"])
+        index_all.assert_not_called()
+        self.assertIsInstance(__import__("json").loads(out.getvalue()), list)
+
+    def test_context_discovery_preserves_string_query(self):
+        conn = self._generation_db()
+        out = io.StringIO()
+        with mock.patch.object(recall, "connect", return_value=conn), \
+                mock.patch.object(recall, "discover_sessions", return_value=[]) as discover, \
+                redirect_stdout(out):
+            recall.main(["context", "discover", "streambed internals"])
+
+        discover.assert_called_once_with(conn, "streambed internals", offset=0, limit=5)
+
+    def test_context_discovery_searches_titles_and_messages_and_ranks_title_first(self):
+        conn = self._generation_db()
+        conn.execute(
+            "INSERT INTO messages(path,session_id,source,project,role,type,ts,epoch,line_no,text,nl_text) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ("/tmp/other.jsonl", "title-match", "pi", "/tmp/streambed", "user", "user",
+             "2026-07-02T00:00:00Z", 3, 1, "Streambed internals", "Streambed internals"),
+        )
+        conn.commit()
+
+        rows = recall.discover_sessions(conn, "streambed internals", limit=5)
+
+        self.assertEqual(rows[0]["session_id"], "title-match")
+        self.assertGreater(rows[0]["score"], 0)
+
+    def test_context_discovery_includes_message_only_matches(self):
+        conn = self._generation_db()
+        conn.executemany(
+            "INSERT INTO messages(path,session_id,source,project,role,type,ts,epoch,line_no,text,nl_text) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                ("/tmp/message.jsonl", "message-match", "pi", "/tmp/other", "user", "user",
+                 "2026-07-02T00:00:00Z", 3, 1, "Generic work", "Generic work"),
+                ("/tmp/message.jsonl", "message-match", "pi", "/tmp/other", "assistant", "assistant",
+                 "2026-07-02T00:01:00Z", 4, 2, "Streambed internals use Iceberg.", "Streambed internals use Iceberg."),
+            ],
+        )
+        conn.commit()
+        rows = recall.discover_sessions(conn, "streambed internals", limit=5)
+        self.assertIn("message-match", {row["session_id"] for row in rows})
+
+    def test_focus_is_applied_to_map_and_final_generation_prompts(self):
+        focus = "Implementation architecture and invariants"
+        mapped = recall._map_generation_prompt("evidence", 1, 2, focus)
+        final = recall._final_generation_prompt(["summary"], "streambed-internals", focus)
+
+        self.assertIn(focus, mapped)
+        self.assertIn(focus, final)
+        self.assertIn("not mandatory", final)
+
+    def test_flexible_context_draft_does_not_require_standard_sections(self):
+        draft = recall._validate_context_draft(
+            "streambed-marketing", "# streambed-marketing\n\n## Positioning\n\nFor agents."
+        )
+        self.assertIn("## Positioning", draft)
+
+    def test_interactive_discovery_supports_show_more_and_multi_select(self):
+        first = [{"session_id": f"first-{i}", "title": f"First {i}", "last_epoch": 1,
+                  "message_hits": 1, "snippet": None} for i in range(5)]
+        second = [{"session_id": "sixth", "title": "Sixth", "last_epoch": 2,
+                   "message_hits": 1, "snippet": None},
+                  {"session_id": "seventh", "title": "Seventh", "last_epoch": 2,
+                   "message_hits": 1, "snippet": None}]
+        with mock.patch.object(recall, "discover_sessions", side_effect=[first, second]) as discover, \
+                mock.patch("builtins.input", side_effect=["more", "1,2"]):
+            sessions, source, blank = recall._interactive_creation_source(object(), "streambed")
+        self.assertEqual(sessions, ["sixth", "seventh"])
+        self.assertIsNone(source)
+        self.assertFalse(blank)
+        self.assertEqual(discover.call_args_list[1].kwargs["offset"], 5)
+
+    def test_interactive_focus_requires_explicit_general_or_custom_text(self):
+        args = SimpleNamespace(general=False, focus=None)
+        with mock.patch.object(recall.sys.stdin, "isatty", return_value=True), \
+                mock.patch("builtins.input", side_effect=["", "general"]):
+            self.assertEqual(recall._creation_focus(args), "General durable project context")
+
+    def test_model_backed_create_without_source_fails_non_interactively(self):
+        args = SimpleNamespace(name="project", session=None, source=None, blank=False,
+                               focus=None, general=False, model=None, dry_run=False,
+                               yes=False, force=False, draft_only=False, json=False)
+        conn = self._generation_db()
+        with mock.patch.object(recall.sys.stdin, "isatty", return_value=False), \
+                self.assertRaisesRegex(recall.ContextError, "requires --session"):
+            recall._context_create_evidence(conn, args)
+
+    def test_session_create_has_separate_transmission_and_save_review(self):
+        conn = self._generation_db()
+        response = "# project\n\n## Architecture\n\n- Portable."
+        args = SimpleNamespace(name="project", session=["abcd"], source=None, blank=False,
+                               focus="Implementation architecture", general=False, model=None,
+                               dry_run=False, yes=False, force=False, draft_only=False, json=False)
+        with mock.patch.object(recall, "_run_pi_generation", return_value=response) as generate, \
+                mock.patch.object(recall.sys.stdin, "isatty", return_value=True), \
+                mock.patch("builtins.input", side_effect=["yes", "cancel"]):
+            self.assertIsNone(recall._context_create_evidence(conn, args))
+        generate.assert_called_once()
+        self.assertFalse(recall._context_path("project").exists())
+
+    def test_session_create_editor_returns_to_review_without_regenerating(self):
+        conn = self._generation_db()
+        response = "# project\n\n## Architecture\n\n- Portable."
+        args = SimpleNamespace(name="project", session=["abcd"], source=None, blank=False,
+                               focus="Implementation architecture", general=False, model=None,
+                               dry_run=False, yes=False, force=False, draft_only=False, json=False)
+        edited = "<!-- reviewed -->\n\n# project\n\n## Architecture\n\n- Edited.\n"
+        with mock.patch.object(recall, "_run_pi_generation", return_value=response) as generate, \
+                mock.patch.object(recall, "_edit_proposed_context", return_value=edited), \
+                mock.patch.object(recall.sys.stdin, "isatty", return_value=True), \
+                mock.patch("builtins.input", side_effect=["yes", "editor", "cancel"]):
+            self.assertIsNone(recall._context_create_evidence(conn, args))
+        generate.assert_called_once()
+        self.assertFalse(recall._context_path("project").exists())
+
+    def test_source_info_protocol_is_lexical_and_does_not_require_path(self):
+        missing = str(Path(self.tmp.name) / "not-there")
+        out = io.StringIO()
+        with redirect_stdout(out):
+            recall.main(["context", "source-info", missing, "--model", "test/model"])
+        payload = __import__("json").loads(out.getvalue())
+        self.assertEqual(payload["path"], missing)
+        self.assertIn("not yet accessed", payload["disclosure"])
+
+    def test_source_denial_does_not_access_missing_path(self):
+        conn = self._generation_db()
+        missing = str(Path(self.tmp.name) / "must-not-be-accessed")
+        args = SimpleNamespace(name="project", session=None, source=missing, blank=False,
+                               focus="Architecture", general=False, model=None, dry_run=False,
+                               yes=False, force=False, draft_only=False, json=False)
+        with mock.patch.object(recall.sys.stdin, "isatty", return_value=True), \
+                mock.patch("builtins.input", return_value="no"), \
+                mock.patch.object(recall, "collect_source_snapshot") as collect:
+            self.assertIsNone(recall._context_create_evidence(conn, args))
+        collect.assert_not_called()
+
+    def test_source_create_sends_one_bounded_prepared_prompt(self):
+        conn = self._generation_db()
+        source = Path(self.tmp.name) / "source"
+        source.mkdir()
+        snapshot = {
+            "files": [{"path": "README.md", "content": "Evidence", "bytes": 8, "truncated": False}],
+            "listing": ["README.md"], "skipped": [], "bytesRead": 8,
+        }
+        args = SimpleNamespace(name="project", session=None, source=str(source), blank=False,
+                               focus="Architecture", general=False, model=None, dry_run=False,
+                               yes=True, force=False, draft_only=True, json=True,
+                               source_device=None, source_inode=None)
+        out = io.StringIO()
+        with mock.patch.object(recall, "collect_source_snapshot", return_value=snapshot), \
+                mock.patch.object(recall, "_run_pi_generation", return_value="# project\n\n## Architecture\n\nSupported.") as generate, \
+                redirect_stdout(out):
+            recall._context_create_evidence(conn, args)
+
+        generate.assert_called_once()
+        prompt = generate.call_args.args[0]
+        self.assertIn("## Selected evidence", prompt)
+        self.assertLessEqual(len(prompt), SOURCE_MAX_EVIDENCE_CHARS)
+
     def _generation_db(self):
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
@@ -682,14 +826,14 @@ class ContextBankTests(unittest.TestCase):
     def test_generate_context_with_pi_and_deterministic_source(self):
         conn = self._generation_db()
         args = SimpleNamespace(
-            name="events-db", session=["abcd"], result=None, model="test/model",
-            dry_run=False, yes=True, force=False,
+            name="events-db", session=["abcd"], source=None, focus="Durable implementation decisions", general=False,
+            model="test/model", dry_run=False, yes=True, force=False, draft_only=False, json=False,
         )
 
         with mock.patch.object(
                 recall, "_run_pi_generation", return_value="# Events DB\n\n## Decisions\n\nUse Markdown."
         ) as generate:
-            path = recall._context_generate(conn, args)
+            path = recall._context_create_evidence(conn, args)
 
         text = path.read_text(encoding="utf-8")
         self.assertIn("Generated by recall", text)
@@ -708,28 +852,42 @@ class ContextBankTests(unittest.TestCase):
         )
         conn.commit()
         args = SimpleNamespace(
-            name="events-db", session=["abcd"], result=None, model=None,
-            dry_run=False, yes=True, force=False,
+            name="events-db", session=["abcd"], source=None, focus="General project context", general=False,
+            model=None, dry_run=False, yes=True, force=False, draft_only=False, json=False,
         )
         stderr = io.StringIO()
 
         with mock.patch.object(
                 recall, "_run_pi_generation", return_value="# Context\n\n## Current state\n\nReady."
         ) as generate, redirect_stderr(stderr):
-            recall._context_generate(conn, args)
+            recall._context_create_evidence(conn, args)
 
         self.assertGreaterEqual(generate.call_count, 3)
         self.assertIn("combining 2 summaries...", stderr.getvalue())
 
+    def test_draft_protocol_returns_json_without_saving(self):
+        conn = self._generation_db()
+        args = SimpleNamespace(
+            name="events-db", session=["abcd"], source=None, focus="Architecture", general=False,
+            model=None, dry_run=False, yes=True, force=False, draft_only=True, json=True,
+        )
+        out = io.StringIO()
+        with mock.patch.object(recall, "_run_pi_generation", return_value="# events-db\n\n## Architecture\n\nPortable."), \
+                redirect_stdout(out):
+            self.assertIsNone(recall._context_create_evidence(conn, args))
+        payload = __import__("json").loads(out.getvalue())
+        self.assertIn("## Architecture", payload["draft"])
+        self.assertFalse(recall._context_path("events-db").exists())
+
     def test_generate_dry_run_does_not_call_model_or_write(self):
         conn = self._generation_db()
         args = SimpleNamespace(
-            name="events-db", session=["abcd"], result=None, model=None,
-            dry_run=True, yes=False, force=False,
+            name="events-db", session=["abcd"], source=None, focus="General project context", general=False,
+            model=None, dry_run=True, yes=False, force=False, draft_only=False, json=False,
         )
 
         with mock.patch.object(recall, "_run_pi_generation") as generate:
-            self.assertIsNone(recall._context_generate(conn, args))
+            self.assertIsNone(recall._context_create_evidence(conn, args))
 
         generate.assert_not_called()
         self.assertFalse(recall._context_path("events-db").exists())

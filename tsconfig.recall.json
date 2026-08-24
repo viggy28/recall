@@ -9,5 +9,5 @@
     "noEmit": true,
     "allowImportingTsExtensions": true
   },
-  "include": ["extensions/recall/index.ts", "extensions/recall/source-collector.ts", "extensions/recall/source-collector.test.ts", "extensions/recall/source-create.test.ts"]
+  "include": ["extensions/recall/index.ts", "extensions/recall/source-create.test.ts"]
 }
