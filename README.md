@@ -95,9 +95,20 @@ open graph.html
 Context banks turn useful material from past conversations into reusable Markdown documents. Create, review, update, and attach them to future Pi sessions without moving your project context to a hosted service.
 
 ```bash
-recall context show migration-safe-notsafe
-recall context update migration-safe-notsafe "Record the latest parser and rules-engine decisions"
+# Discover matching indexed sessions locally, select evidence, then choose a focus.
+recall context create streambed-internals
+
+# Or select evidence and focus explicitly.
+recall context create streambed-internals \
+  --session 019fcf9a \
+  --session 019fd039 \
+  --focus "Architecture, code paths, invariants, and technical debt"
+
+recall context show streambed-internals
+recall context update streambed-internals "Record the latest implementation decisions"
 ```
+
+Use `recall context create NAME --blank` for an intentional empty template. Model-backed creation separately reviews evidence transmission and the generated document before saving.
 
 ![Recall context update review](docs/context-review-controls.svg)
 

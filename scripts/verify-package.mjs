@@ -8,10 +8,10 @@ const requiredFiles = [
   'recall_core/ingestion.py',
   'recall_core/indexing.py',
   'recall_core/retrieval.py',
+  'recall_core/context_creation.py',
   'pyproject.toml',
   'requirements-semantic.txt',
   'extensions/recall/index.ts',
-  'extensions/recall/source-collector.ts',
   'README.md',
 ];
 
@@ -21,7 +21,6 @@ const requiredDeclarations = [
   'pyproject.toml',
   'requirements-semantic.txt',
   'extensions/recall/index.ts',
-  'extensions/recall/source-collector.ts',
   'README.md',
 ];
 

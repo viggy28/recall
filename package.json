@@ -25,7 +25,6 @@
     "pyproject.toml",
     "requirements-semantic.txt",
     "extensions/recall/index.ts",
-    "extensions/recall/source-collector.ts",
     "docs/*.md",
     "docs/*.svg",
     "docs/recall-demo.gif",
@@ -33,7 +32,7 @@
     "README.md"
   ],
   "scripts": {
-    "test:collector": "node --experimental-strip-types --test extensions/recall/source-collector.test.ts extensions/recall/source-create.test.ts",
+    "test:collector": "node --experimental-strip-types --test extensions/recall/source-create.test.ts",
     "typecheck": "tsc --project tsconfig.recall.json"
   },
   "pi": {
