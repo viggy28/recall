@@ -340,15 +340,38 @@ class SemanticCliStartupTests(unittest.TestCase):
         build_embeddings.assert_not_called()
 
     def test_semantic_tui_does_not_build_embeddings_during_invocation(self):
+        self.conn.execute(
+            "INSERT INTO chunks(message_id,session_id,ord,text) VALUES(?,?,?,?)",
+            (1, "session", 0, "startup latency"),
+        )
+        chunk_id = self.conn.execute("SELECT id FROM chunks").fetchone()[0]
+        self.conn.execute("INSERT INTO embeddings(chunk_id,vec) VALUES(?,?)", (chunk_id, b"vector"))
+        self.conn.commit()
+
         with mock.patch.object(recall, "connect", return_value=self.conn), \
                 mock.patch.object(recall, "index_all") as index_all, \
                 mock.patch.object(recall, "build_embeddings") as build_embeddings, \
+                mock.patch.object(recall, "_semantic_dependency_error", return_value=None), \
                 mock.patch.object(recall, "tui") as tui:
             recall.main(["tui", "--semantic"])
 
         index_all.assert_called_once_with(self.conn, quiet=True)
         build_embeddings.assert_not_called()
         tui.assert_called_once()
+
+    def test_semantic_tui_fails_when_embeddings_are_absent(self):
+        stderr = io.StringIO()
+        with mock.patch.object(recall, "connect", return_value=self.conn), \
+                mock.patch.object(recall, "index_all"), \
+                mock.patch.object(recall, "build_embeddings") as build_embeddings, \
+                mock.patch.object(recall, "tui") as tui, redirect_stderr(stderr), \
+                self.assertRaisesRegex(SystemExit, "1"):
+            recall.main(["tui", "--semantic"])
+
+        self.assertIn("no embeddings yet", stderr.getvalue())
+        self.assertIn("recall index -s", stderr.getvalue())
+        build_embeddings.assert_not_called()
+        tui.assert_not_called()
 
 
 class SessionScopedFuzzySearchTests(unittest.TestCase):
