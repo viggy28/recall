@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="640" viewBox="0 0 1400 640" role="img" aria-labelledby="title desc">
+  <title id="title">Recall context creation progress in Pi</title>
+  <desc id="desc">Pi terminal showing approval followed by a cancellable progress loader while Recall creates a context from selected evidence.</desc>
+  <rect width="1400" height="640" fill="#050505"/>
+  <rect x="18" y="18" width="1364" height="604" rx="4" fill="none" stroke="#555" stroke-width="2"/>
+
+  <g font-family="SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace" font-size="25">
+    <text x="48" y="68" fill="#c8c8c8">Create a Recall context named streambed-test</text>
+    <text x="48" y="108" fill="#747474">Source: selected indexed sessions · Focus: Durable project focus</text>
+
+    <line x1="34" y1="142" x2="1366" y2="142" stroke="#78b6d5" stroke-width="2"/>
+    <text x="48" y="190" fill="#d6b85c">Send selected transcript evidence?</text>
+    <text x="48" y="230" fill="#8b8b8b">The selected evidence will be sent to the configured model.</text>
+    <text x="48" y="270" fill="#8b8b8b">Saving requires a separate reviewed action.</text>
+    <text x="48" y="318" fill="#72d5cf">✓ Yes</text>
+
+    <line x1="34" y1="356" x2="1366" y2="356" stroke="#78b6d5" stroke-width="2"/>
+    <text x="58" y="415" fill="#72d5cf">⠹</text>
+    <text x="100" y="415" fill="#d0d0d0">Creating streambed-test from selected evidence…</text>
+    <text x="58" y="477" fill="#777">esc</text>
+    <text x="118" y="477" fill="#8b8b8b">cancel</text>
+    <line x1="34" y1="515" x2="1366" y2="515" stroke="#78b6d5" stroke-width="2"/>
+
+    <text x="48" y="578" fill="#666">Recall is collecting evidence and generating the draft. Review appears next.</text>
+  </g>
+</svg>

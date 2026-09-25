@@ -935,6 +935,38 @@ async function backendContextDraft(
   return JSON.parse(output) as BackendContextDraft;
 }
 
+async function backendContextDraftWithLoader(
+  pi: ExtensionAPI,
+  ctx: ExtensionContext,
+  label: string,
+  name: string,
+  focus: ContextFocus,
+  sessions: string[],
+  sourcePath: string | undefined,
+  outerSignal?: AbortSignal,
+  sourceIdentity?: { dev: number; ino: number },
+  snapshotPath?: string,
+): Promise<BackendContextDraft | null> {
+  return ctx.ui.custom<BackendContextDraft | null>((tui, theme, _keybindings, done) => {
+    const loader = new BorderedLoader(tui, theme, label);
+    let finished = false;
+    const finish = (result: BackendContextDraft | null) => {
+      if (finished) return;
+      finished = true;
+      done(result);
+    };
+    loader.onAbort = () => finish(null);
+    const signal = outerSignal ? AbortSignal.any([loader.signal, outerSignal]) : loader.signal;
+    backendContextDraft(pi, ctx, name, focus, sessions, sourcePath, signal, sourceIdentity, snapshotPath)
+      .then(finish)
+      .catch((error) => {
+        if (!signal.aborted) ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        finish(null);
+      });
+    return loader;
+  });
+}
+
 async function createContextFromCanonicalBackend(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
@@ -993,7 +1025,11 @@ async function createContextFromCanonicalBackend(
     sourceIdentity = { dev: info.dev, ino: info.ino };
   }
 
-  const initial = await backendContextDraft(pi, ctx, name, focus, sessions ?? [], approvedSourcePath, signal, sourceIdentity);
+  const initial = await backendContextDraftWithLoader(
+    pi, ctx, `Creating ${name} from selected evidence…`, name, focus,
+    sessions ?? [], approvedSourcePath, signal, sourceIdentity,
+  );
+  if (!initial) return { status: "cancelled" };
   let draft = initial.draft;
   let snapshotDirectory: string | undefined;
   let snapshotPath: string | undefined;
@@ -1010,9 +1046,11 @@ async function createContextFromCanonicalBackend(
         const revised = await ctx.ui.editor(`Revise the focus for ${name}`, focus.label);
         if (revised?.trim()) {
           focus = { preset: "custom", label: normalizeContextFocus(revised) };
-          const regenerated = await backendContextDraft(
-            pi, ctx, name, focus, sessions ?? [], undefined, signal, undefined, snapshotPath,
+          const regenerated = await backendContextDraftWithLoader(
+            pi, ctx, `Regenerating ${name} with revised focus…`, name, focus,
+            sessions ?? [], undefined, signal, undefined, snapshotPath,
           );
+          if (!regenerated) return { status: "cancelled" };
           draft = regenerated.draft;
         }
         continue;
