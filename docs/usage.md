@@ -77,7 +77,7 @@ pip install -r requirements-semantic.txt
 python3 recall.py index --semantic
 ```
 
-The configured embedding model is downloaded and run locally. Embeddings remain in the local SQLite database.
+The configured embedding model is downloaded and run locally. Embeddings remain in the local SQLite database. Semantic search uses the embeddings already stored there and never rebuilds them during search or TUI startup. When Recall reports that the semantic index is stale, refresh it explicitly with `recall index --semantic`.
 
 ## Pi extension
 

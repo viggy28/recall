@@ -2292,8 +2292,6 @@ def main(argv=None):
         init_db(conn)
         if not args.no_index:
             index_all(conn, quiet=True)
-            if args.semantic and _pending_embed_count(conn):
-                build_embeddings(conn)
         tui(conn, args)
         return
 
@@ -2338,8 +2336,6 @@ def main(argv=None):
         init_db(conn)
         if not args.no_index:
             index_all(conn, quiet=True)
-            if args.semantic and _pending_embed_count(conn):
-                build_embeddings(conn)
         if args.regex:
             rows = search_regex(conn, args)
         elif args.semantic:

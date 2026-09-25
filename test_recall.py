@@ -319,6 +319,38 @@ class TuiPresentationTests(unittest.TestCase):
         self.assertEqual(detail_x + detail_width, 199)
 
 
+class SemanticCliStartupTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = sqlite3.connect(":memory:")
+        self.conn.row_factory = sqlite3.Row
+        recall.init_db(self.conn)
+
+    def tearDown(self):
+        self.conn.close()
+
+    def test_semantic_search_does_not_build_embeddings_during_invocation(self):
+        with mock.patch.object(recall, "connect", return_value=self.conn), \
+                mock.patch.object(recall, "index_all") as index_all, \
+                mock.patch.object(recall, "build_embeddings") as build_embeddings, \
+                mock.patch.object(recall, "search_semantic", return_value=[]), \
+                mock.patch.object(recall, "render"):
+            recall.main(["search", "startup latency", "--semantic"])
+
+        index_all.assert_called_once_with(self.conn, quiet=True)
+        build_embeddings.assert_not_called()
+
+    def test_semantic_tui_does_not_build_embeddings_during_invocation(self):
+        with mock.patch.object(recall, "connect", return_value=self.conn), \
+                mock.patch.object(recall, "index_all") as index_all, \
+                mock.patch.object(recall, "build_embeddings") as build_embeddings, \
+                mock.patch.object(recall, "tui") as tui:
+            recall.main(["tui", "--semantic"])
+
+        index_all.assert_called_once_with(self.conn, quiet=True)
+        build_embeddings.assert_not_called()
+        tui.assert_called_once()
+
+
 class SessionScopedFuzzySearchTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(":memory:")
