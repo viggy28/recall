@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import test from "node:test";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import recallExtension from "./index.ts";
 
 function registeredContextTool(onExec?: (options: any) => void): any {
@@ -63,6 +64,84 @@ test("non-TUI creation cancels without model or filesystem work", async () => {
   );
   assert.equal(confirms, 0);
   assert.equal(result.details.status, "cancelled");
+});
+
+test("context generation shows cancellable progress after approval", async (t) => {
+  initTheme(undefined, false);
+  let contextTool: any;
+  let customCalls = 0;
+  let loaderType = "";
+  let loaderComponent: any;
+  t.after(() => loaderComponent?.dispose?.());
+  let generationSignal: AbortSignal | undefined;
+  let releaseGeneration!: () => void;
+  const source = tmpdir();
+  const generationGate = new Promise<void>((resolve) => { releaseGeneration = resolve; });
+  const pi = {
+    registerCommand() {},
+    async exec(_binary: string, args: string[], options: any) {
+      if (args.includes("source-info")) {
+        return { code: 0, stdout: JSON.stringify({ path: source, disclosure: `Path: ${source}` }), stderr: "" };
+      }
+      if (args.includes("create")) {
+        generationSignal = options.signal;
+        await generationGate;
+        return { code: 0, stdout: JSON.stringify({ draft: "# Progress test\n" }), stderr: "" };
+      }
+      throw new Error(`unexpected backend call: ${args.join(" ")}`);
+    },
+    registerTool(tool: any) {
+      if (tool.name === "recall_context") contextTool = tool;
+    },
+  };
+  recallExtension(pi as any);
+
+  const execution = contextTool.execute(
+    "call",
+    { action: "create", name: `progress-${process.pid}-${Date.now()}`, instruction: "Durable architecture", source_path: source },
+    new AbortController().signal,
+    () => {},
+    {
+      hasUI: true,
+      mode: "tui",
+      cwd: source,
+      model: { provider: "test-provider", id: "test-model" },
+      ui: {
+        async confirm() { return true; },
+        async editor() { throw new Error("editor must not be called"); },
+        async custom(factory: any) {
+          customCalls++;
+          if (customCalls > 1) return "cancel";
+          return new Promise((resolve) => {
+            let component: any;
+            component = factory(
+              { requestRender() {} },
+              { fg(_color: string, value: string) { return value; } },
+              {},
+              (value: unknown) => {
+                component?.dispose?.();
+                resolve(value);
+              },
+            );
+            loaderComponent = component;
+            loaderType = component.constructor.name;
+          });
+        },
+        notify() {},
+      },
+      sessionManager: { getBranch() { return []; } },
+      modelRegistry: {},
+    },
+  );
+
+  while (!generationSignal) await new Promise((resolve) => setImmediate(resolve));
+  releaseGeneration();
+  const result = await execution;
+
+  assert.equal(loaderType, "BorderedLoader");
+  assert.ok(generationSignal instanceof AbortSignal);
+  assert.equal(result.details.status, "cancelled");
+  assert.equal(customCalls, 2);
 });
 
 test("denying source approval does not access the path or generate", async () => {
