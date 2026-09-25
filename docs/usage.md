@@ -132,14 +132,14 @@ Context banks are plain Markdown files created from selected evidence and an exp
 
 ```bash
 # Interactive: search the existing local index, select one or more sessions,
-# then choose General context or enter a custom focus.
+# then choose Durable project, Current task, Decision history, or Custom focus.
 recall context create streambed-internals
 
 # Explicit indexed sessions (repeat --session).
 recall context create streambed-internals \
   --session 019fcf9a \
   --session 019fd039 \
-  --focus "Architecture, code paths, invariants, constraints, and technical debt"
+  --focus-preset durable
 
 # Explicit repository evidence, inspected only after approval.
 recall context create streambed-marketing \
@@ -160,7 +160,7 @@ recall context delete streambed-internals --force
 
 With no source flag in a terminal, `context create` searches already-indexed session titles and messages locally. It shows five ranked matches at a time and supports show-more, refined search, and comma-separated multi-selection. Creation never triggers indexing. In non-interactive use, select `--session`, `--source`, or `--blank` explicitly.
 
-Focus is a synthesis lens, not evidence. It is included in every chunk summary and the final synthesis so separate contexts can reuse the same sessions for different purposes. The standard Current state/Decisions/Constraints/Open questions/References structure is a default; focused contexts may use a more appropriate Markdown structure.
+Focus is a synthesis lens, not evidence. Opinionated focuses keep the generated body to at most 15 Markdown lines and 150 words, and the complete initial context to at most 20 lines including compact provenance, while selecting the most important themes or decisions instead of producing exhaustive implementation documentation. **Durable project** (recommended) preserves the difference between shipped behavior and historical proposals; **Current task** creates a dated handoff; **Decision history** preserves adopted, proposed, rejected, and superseded status. A custom focus adds a topic-specific lens with conservative evidence handling. The focus policy is applied during every chunk summary and the final synthesis.
 
 Model-backed creation separates two decisions: first approve sending the displayed evidence to the displayed provider/model, then review the generated draft and separately Apply, Revise focus, use the Full editor, or Cancel. `context update` keeps its focused diff review. For model-free update scripts, repeat `--replace OLD NEW`.
 

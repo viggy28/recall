@@ -100,9 +100,10 @@ from recall_core.indexing import (
 )
 from recall_core.graph import NerUnavailable, build_graph, render_graph
 from recall_core.context_creation import (
-    DISCOVERY_PAGE_SIZE, collect_source_snapshot, discover_sessions, final_generation_prompt,
-    lexical_source_path, load_source_snapshot, map_generation_prompt, source_disclosure,
-    source_generation_prompt, validate_draft,
+    DISCOVERY_PAGE_SIZE, FOCUS_PRESETS, collect_source_snapshot, compression_prompt,
+    discover_sessions, final_generation_prompt, initial_draft_size_error, lexical_source_path,
+    load_source_snapshot, map_generation_prompt, normalize_focus, source_disclosure, source_generation_prompt,
+    validate_draft,
 )
 
 def index_all(conn, full=False, purge_missing=False, semantic=False, quiet=False):
@@ -1400,12 +1401,14 @@ def _run_pi_generation(prompt: str, model: str | None = None) -> str:
     return output
 
 
-def _map_generation_prompt(chunk: str, number: int, total: int, focus: str | None = None) -> str:
-    return map_generation_prompt(chunk, number, total, focus)
+def _map_generation_prompt(chunk: str, number: int, total: int, focus: str | None = None,
+                           preset: str = "durable") -> str:
+    return map_generation_prompt(chunk, number, total, focus, preset)
 
 
-def _final_generation_prompt(summaries: list[str], context_name: str, focus: str | None = None) -> str:
-    return final_generation_prompt(summaries, context_name, focus)
+def _final_generation_prompt(summaries: list[str], context_name: str, focus: str | None = None,
+                             preset: str = "durable") -> str:
+    return final_generation_prompt(summaries, context_name, focus, preset)
 
 
 def _strip_markdown_fence(text: str) -> str:
@@ -1466,20 +1469,37 @@ def _interactive_creation_source(conn, name: str) -> tuple[list[str], str | None
             return [rows[number - 1]["session_id"] for number in numbers], None, False
 
 
-def _creation_focus(args) -> str:
-    if getattr(args, "general", False):
-        return "General durable project context"
+def _creation_focus(args) -> tuple[str, str]:
+    preset = getattr(args, "focus_preset", None)
+    if getattr(args, "general", False) or preset == "durable":
+        return FOCUS_PRESETS["durable"]["label"], "durable"
+    if preset:
+        return FOCUS_PRESETS[preset]["label"], preset
     if getattr(args, "focus", None):
-        return args.focus.strip()
+        try:
+            return normalize_focus(args.focus), "custom"
+        except ValueError as e:
+            raise ContextError(str(e)) from None
     if not sys.stdin.isatty():
-        raise ContextError("model-backed context creation requires --focus TEXT or --general")
+        raise ContextError("model-backed context creation requires --focus TEXT, --focus-preset, or --general")
+    choices = {
+        "d": "durable", "durable": "durable", "general": "durable", "g": "durable",
+        "t": "current-task", "task": "current-task", "current": "current-task",
+        "h": "decision-history", "history": "decision-history", "decisions": "decision-history",
+    }
     while True:
-        value = input("Focus/theme (describe it, or type 'general'): ").strip()
-        if value.lower() in ("g", "general"):
-            return "General durable project context"
-        if value:
-            return value
-        print("Choose an explicit focus or type 'general'.")
+        value = input("Focus: [d]urable project, current [t]ask, decision [h]istory, or [c]ustom: ").strip().lower()
+        if value in choices:
+            selected = choices[value]
+            return FOCUS_PRESETS[selected]["label"], selected
+        if value in ("c", "custom"):
+            custom = input("What should this context emphasize? ").strip()
+            if custom:
+                try:
+                    return normalize_focus(custom), "custom"
+                except ValueError as e:
+                    print(e)
+        print("Choose durable, current task, decision history, or custom.")
 
 
 def _session_creation_evidence(conn, prefixes: list[str]) -> tuple[list[dict], list[str], int]:
@@ -1498,20 +1518,32 @@ def _session_creation_evidence(conn, prefixes: list[str]) -> tuple[list[dict], l
 
 
 def _generate_creation_draft(
-        name: str, focus: str, chunks: list[str], model: str | None,
+        name: str, focus: str, focus_preset: str, chunks: list[str], model: str | None,
         prepared_prompt: bool = False) -> str:
     if prepared_prompt:
         result = _run_pi_generation(chunks[0], model)
     elif len(chunks) == 1:
-        result = _run_pi_generation(_final_generation_prompt(chunks, name, focus), model)
+        result = _run_pi_generation(_final_generation_prompt(chunks, name, focus, focus_preset), model)
     else:
         summaries = []
         for i, chunk in enumerate(chunks, 1):
             print(f"summarizing chunk {i}/{len(chunks)}...", file=sys.stderr)
-            summaries.append(_run_pi_generation(_map_generation_prompt(chunk, i, len(chunks), focus), model))
+            summaries.append(_run_pi_generation(
+                _map_generation_prompt(chunk, i, len(chunks), focus, focus_preset), model,
+            ))
         print(f"combining {len(summaries)} summaries...", file=sys.stderr)
-        result = _run_pi_generation(_final_generation_prompt(summaries, name, focus), model)
-    return _validate_context_draft(name, result)
+        result = _run_pi_generation(_final_generation_prompt(summaries, name, focus, focus_preset), model)
+    draft = _validate_context_draft(name, result)
+    for _ in range(2):
+        if not initial_draft_size_error(draft):
+            break
+        print("compressing initial context to the focus limit...", file=sys.stderr)
+        result = _run_pi_generation(compression_prompt(draft, name, focus, focus_preset), model)
+        draft = _validate_context_draft(name, result)
+    error = initial_draft_size_error(draft)
+    if error:
+        raise ContextError(error)
+    return draft
 
 
 def _context_create_evidence(conn, args) -> Path | None:
@@ -1532,7 +1564,7 @@ def _context_create_evidence(conn, args) -> Path | None:
             print("not created.")
             return None
 
-    focus = _creation_focus(args)
+    focus, focus_preset = _creation_focus(args)
     model_label = args.model or "Pi's configured default model"
     status_out = sys.stderr if getattr(args, "json", False) else sys.stdout
     sessions: list[dict] = []
@@ -1580,7 +1612,7 @@ def _context_create_evidence(conn, args) -> Path | None:
                 raise ContextError(f"cannot reuse approved source snapshot: {e}") from None
         if not source_snapshot["files"]:
             raise ContextError("no safe text source files were selected from the approved directory")
-        chunks = [source_generation_prompt(args.name, focus, source_snapshot)]
+        chunks = [source_generation_prompt(args.name, focus, source_snapshot, focus_preset)]
         skip_counts: dict[str, int] = {}
         for item in source_snapshot["skipped"]:
             skip_counts[item["reason"]] = skip_counts.get(item["reason"], 0) + 1
@@ -1600,7 +1632,7 @@ def _context_create_evidence(conn, args) -> Path | None:
             f"compacted:     {compacted}/{len(sessions)} sessions use latest harness summary + tail\n"
             f"input:         {chars:,} characters\nchunks:        {len(chunks)}\nmodel calls:   {calls}", file=status_out
         )
-    print(f"focus:         {focus}\nharness:       pi\nmodel:         {model_label}", file=status_out)
+    print(f"focus:         {focus}\nfocus preset:  {focus_preset}\nharness:       pi\nmodel:         {model_label}", file=status_out)
     if args.dry_run:
         return None
     if not args.yes:
@@ -1613,27 +1645,27 @@ def _context_create_evidence(conn, args) -> Path | None:
 
     while True:
         draft = _generate_creation_draft(
-            args.name, focus, chunks, args.model,
+            args.name, focus, focus_preset, chunks, args.model,
             prepared_prompt=source_snapshot is not None,
         )
         generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        provenance = [f"> Generated: `{generated_at}`  ", f"> Focus: {focus}"]
+        provenance = f"> Generated: `{generated_at}` · Focus: {focus} (`{focus_preset}`)"
         if sessions:
             coverage = _iso_utc(max((s["last_epoch"] for s in sessions if s["last_epoch"] is not None), default=None))
-            provenance.insert(1, f"> Historical source coverage through: `{coverage}`  ")
-            sources = "\n".join(
-                f"- `{s['session_id']}` ({_src_label(s['source'])}; last active `{_iso_utc(s['last_epoch'])}`)"
-                + (f" — {s['title']}" if s["title"] else "") for s in sessions
-            )
+            source_ids = ", ".join(f"`{s['session_id']}`" for s in sessions)
+            evidence = f"> Historical evidence through `{coverage}`: {source_ids}"
         else:
-            provenance.append(f"> Source collection: {len(source_snapshot['files'])} selected; omissions: {source_summary}")
-            sources = "\n".join(f"- `{json.dumps(f['path'])}`" + (" (truncated)" if f["truncated"] else "") for f in source_snapshot["files"])
-        markdown = "<!-- Generated by recall. Review before reuse. -->\n\n" + "\n".join(provenance) + f"\n\n{draft}\n## Recall sources\n\n{sources}\n"
+            evidence = (f"> Repository evidence: {len(source_snapshot['files'])} selected files "
+                        f"({source_snapshot['bytesRead']:,} bytes); omissions: {source_summary}")
+        markdown = f"<!-- Generated by recall. Review before reuse. -->\n\n{provenance}\n{evidence}\n\n{draft}"
+        if len(markdown.strip().splitlines()) > 20:
+            raise ContextError("initial context exceeds 20 Markdown lines including provenance")
         if len(markdown) > MAX_CONTEXT_CHARS:
             raise ContextError(f"generated context exceeds {MAX_CONTEXT_CHARS:,} characters")
         if getattr(args, "draft_only", False):
             if getattr(args, "json", False):
-                payload = {"draft": markdown, "focus": focus, "sessions": [s["session_id"] for s in sessions]}
+                payload = {"draft": markdown, "focus": focus, "focus_preset": focus_preset,
+                           "sessions": [s["session_id"] for s in sessions]}
                 if source_snapshot is not None and getattr(args, "include_snapshot", False):
                     payload["source_snapshot"] = source_snapshot
                 print(json.dumps(payload))
@@ -1652,9 +1684,14 @@ def _context_create_evidence(conn, args) -> Path | None:
             if action in ("r", "revise"):
                 revised = input("Revise focus/theme: ").strip()
                 if revised:
-                    focus = revised
+                    try:
+                        focus = normalize_focus(revised)
+                    except ValueError as e:
+                        print(e)
+                        continue
+                    focus_preset = "custom"
                     if source_snapshot is not None:
-                        chunks = [source_generation_prompt(args.name, focus, source_snapshot)]
+                        chunks = [source_generation_prompt(args.name, focus, source_snapshot, focus_preset)]
                     break
             if action in ("e", "editor"):
                 edited = _edit_proposed_context(markdown)
@@ -1672,8 +1709,8 @@ def _context_discover_command(conn, args) -> None:
 def context_command(args, conn=None) -> int:
     """Dispatch `recall context ...` operations."""
     if args.context_cmd == "create":
-        if args.blank and (args.focus or args.general):
-            raise ContextError("--blank cannot be combined with --focus or --general")
+        if args.blank and (args.focus or args.general or getattr(args, "focus_preset", None)):
+            raise ContextError("--blank cannot be combined with --focus, --focus-preset, or --general")
         path = _context_create(args.name, args.force) if args.blank else _context_create_evidence(conn, args)
         if path:
             print(f"created and verified {path}")
@@ -2184,8 +2221,10 @@ def main(argv=None):
     source.add_argument("--blank", action="store_true", help="create an empty Markdown template")
     source.add_argument("--snapshot-file", help=argparse.SUPPRESS)
     lens = pcc.add_mutually_exclusive_group()
-    lens.add_argument("--focus", help="theme/lens for evidence synthesis")
-    lens.add_argument("--general", action="store_true", help="create a general durable project context")
+    lens.add_argument("--focus", help="custom theme for evidence synthesis")
+    lens.add_argument("--focus-preset", choices=["durable", "current-task", "decision-history"],
+                      help="opinionated synthesis focus (recommended: durable)")
+    lens.add_argument("--general", action="store_true", help="deprecated alias for --focus-preset durable")
     pcc.add_argument("--model", help="Pi model override (default: Pi's configured model)")
     pcc.add_argument("--dry-run", action="store_true", help="show evidence size and call count only")
     pcc.add_argument("--yes", action="store_true", help="skip prompts and save the generated draft")

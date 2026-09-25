@@ -483,6 +483,15 @@ async function writeVerified(path: string, text: string, directoryMode?: number)
   }
 }
 
+function validateContextText(text: string): string {
+  const value = text.trim() + "\n";
+  if (value.length > 100_000) throw new Error("Context exceeds 100,000 characters.");
+  if (!value.split("\n").some((line) => line.startsWith("# "))) {
+    throw new Error("Context must contain a top-level Markdown heading.");
+  }
+  return value;
+}
+
 async function saveContext(name: string, text: string): Promise<string> {
   return writeVerified(contextPath(name), text, 0o700);
 }
@@ -872,17 +881,33 @@ async function selectContextSource(pi: ExtensionAPI, ctx: ExtensionContext, name
   }
 }
 
-async function selectContextFocus(ctx: ExtensionContext, supplied?: string): Promise<string | null> {
-  if (supplied?.trim()) return supplied.trim();
+type ContextFocus = {
+  preset: "durable" | "current-task" | "decision-history" | "custom";
+  label: string;
+};
+
+function normalizeContextFocus(value: string): string {
+  const normalized = value.trim().split(/\s+/).join(" ");
+  if (!normalized) throw new Error("Custom focus must not be empty.");
+  if (normalized.length > 240) throw new Error("Custom focus exceeds 240 characters.");
+  return normalized;
+}
+
+async function selectContextFocus(ctx: ExtensionContext, supplied?: string): Promise<ContextFocus | null> {
+  if (supplied?.trim()) return { preset: "custom", label: normalizeContextFocus(supplied) };
   const kind = await choose(ctx, "Choose a context focus", [
-    { value: "general", label: "General project context", description: "Durable state, decisions, constraints, and open questions" },
-    { value: "custom", label: "Custom focus/theme", description: "For example implementation internals or product positioning" },
+    { value: "durable", label: "Durable project focus (recommended)", description: "Important stable themes and verified decisions; excludes transient work and unverified plans" },
+    { value: "current-task", label: "Current task focus", description: "Latest goal, progress, blockers, decisions, and next steps" },
+    { value: "decision-history", label: "Decision history focus", description: "Consequential decisions, alternatives, rationale, and status" },
+    { value: "custom", label: "Custom focus", description: "A topic-specific lens with conservative evidence handling" },
     { value: "cancel", label: "Cancel" },
   ]);
   if (!kind || kind === "cancel") return null;
-  if (kind === "general") return "General durable project context";
+  if (kind === "durable") return { preset: "durable", label: "Durable project focus" };
+  if (kind === "current-task") return { preset: "current-task", label: "Current task focus" };
+  if (kind === "decision-history") return { preset: "decision-history", label: "Decision history focus" };
   const focus = await ctx.ui.editor("What should this context emphasize?", "");
-  return focus?.trim() || null;
+  return focus?.trim() ? { preset: "custom", label: normalizeContextFocus(focus) } : null;
 }
 
 type BackendContextDraft = { draft: string; source_snapshot?: unknown };
@@ -891,14 +916,16 @@ async function backendContextDraft(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   name: string,
-  focus: string,
+  focus: ContextFocus,
   sessions: string[],
   sourcePath: string | undefined,
   signal?: AbortSignal,
   sourceIdentity?: { dev: number; ino: number },
   snapshotPath?: string,
 ): Promise<BackendContextDraft> {
-  const args = ["context", "create", name, "--focus", focus, "--yes", "--draft-only", "--json"];
+  const args = ["context", "create", name, "--yes", "--draft-only", "--json"];
+  if (focus.preset === "custom") args.push("--focus", focus.label);
+  else args.push("--focus-preset", focus.preset);
   for (const id of sessions) args.push("--session", id);
   if (sourcePath) args.push("--source", sourcePath, "--include-snapshot");
   if (snapshotPath) args.push("--snapshot-file", snapshotPath);
@@ -946,7 +973,7 @@ async function createContextFromCanonicalBackend(
     : `Indexed sessions:\n${sessions!.map((id) => `- ${id}`).join("\n")}`;
   const approved = await ctx.ui.confirm(
     selectedSourcePath ? "Inspect source directory?" : "Send selected transcript evidence?",
-    `${evidence}\nFocus: ${focus}\nGeneration model: ${model}\n\nSaving requires a separate reviewed action.`,
+    `${evidence}\nFocus: ${focus.label}\nGeneration model: ${model}\n\nSaving requires a separate reviewed action.`,
   );
   if (!approved || signal?.aborted) return { status: "cancelled" };
   let approvedSourcePath = selectedSourcePath;
@@ -980,9 +1007,9 @@ async function createContextFromCanonicalBackend(
       const action = await reviewContextText(ctx, `Create ${name}`, draft, true);
       if (action === "cancel") return { status: "cancelled" };
       if (action === "revise") {
-        const revised = await ctx.ui.editor(`Revise the focus for ${name}`, focus);
+        const revised = await ctx.ui.editor(`Revise the focus for ${name}`, focus.label);
         if (revised?.trim()) {
-          focus = revised.trim();
+          focus = { preset: "custom", label: normalizeContextFocus(revised) };
           const regenerated = await backendContextDraft(
             pi, ctx, name, focus, sessions ?? [], undefined, signal, undefined, snapshotPath,
           );
@@ -993,10 +1020,14 @@ async function createContextFromCanonicalBackend(
       if (action === "editor") {
         const edited = await ctx.ui.editor(`Edit proposed ${name}`, draft);
         if (edited === undefined) continue;
-        draft = edited;
+        try {
+          draft = validateContextText(edited);
+        } catch (error) {
+          ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        }
         continue;
       }
-      await saveContext(name, draft);
+      await saveContext(name, validateContextText(draft));
       ctx.ui.notify(`Created and verified ${path}`, "info");
       return { status: "created", path };
     }
@@ -1341,7 +1372,7 @@ export default function recallExtension(pi: ExtensionAPI) {
     description: "List, show, attach, create from selected evidence, or update a Recall context. Creation discovers indexed sessions locally and requires reviewed approval.",
     promptSnippet: "Create, manage, and update reusable local context banks",
     promptGuidelines: [
-      "Use recall_context with action create when the user asks to create a context. Pass instruction only when the user supplied a focus/theme; otherwise Recall asks them to choose General or a custom focus and discovers indexed sessions locally.",
+      "Use recall_context with action create when the user asks to create a context. Pass instruction only when the user supplied a custom focus/theme; otherwise Recall offers opinionated Durable project, Current task, Decision history, and Custom focuses and discovers indexed sessions locally.",
       "When the user explicitly asks to create a context from source and supplies a repository path, pass that exact path as source_path. For example, `create recall context for safe-notsafe from the source.\\n~/source/github/viggy28/safe-not-safe` uses source_path `~/source/github/viggy28/safe-not-safe`. Never infer a path with regex or substitute the current working directory.",
       "Use recall_context with action update when the user naturally asks to update, revise, correct, or refresh an existing Recall context; pass the user's exact update as instruction.",
     ],

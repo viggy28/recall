@@ -146,15 +146,14 @@ class SourceCollectionTests(unittest.TestCase):
                     self.assertRaisesRegex(ValueError, "could not inspect Git"):
                 collect_source_snapshot(Path(tmp))
 
-    def test_source_prompt_is_bounded_and_reports_omissions(self):
+    def test_source_prompt_rejects_impossible_evidence_instead_of_silently_truncating_it(self):
         snapshot = {
             "listing": ["README.md"],
             "files": [{"path": "README.md", "content": "x" * (SOURCE_MAX_EVIDENCE_CHARS * 2), "bytes": 1, "truncated": True}],
             "skipped": [{"path": ".env", "reason": "excluded"}],
         }
-        prompt = source_generation_prompt("project", "Internals", snapshot)
-        self.assertLessEqual(len(prompt), SOURCE_MAX_EVIDENCE_CHARS)
-        self.assertIn("excluded: 1", prompt)
+        with self.assertRaisesRegex(ValueError, "evidence exceeds"):
+            source_generation_prompt("project", "Internals", snapshot)
 
     def test_source_paths_are_quoted_in_disclosure_and_prompt(self):
         path = Path("/tmp/repo\nmisleading")
