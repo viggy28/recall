@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.5.0](https://github.com/viggy28/recall/compare/v0.4.0...v0.5.0) (2026-09-25)
+
+
+### Features
+
+* add opinionated context focus presets ([560cd73](https://github.com/viggy28/recall/commit/560cd7359dbf13ce345f29d7d7b9e246b51d8461))
+* create contexts from local source ([da54551](https://github.com/viggy28/recall/commit/da545517489236fc2360e460fdd58900331bd66a))
+* make context creation source-first ([02bb64d](https://github.com/viggy28/recall/commit/02bb64ddb4332e796156354ef83e32ec2b413909))
+* make context creation source-first ([664040d](https://github.com/viggy28/recall/commit/664040d79acc4c210078c8e62d2162706383c3b9))
+
+
+### Bug Fixes
+
+* avoid semantic indexing during startup ([d9c2b3c](https://github.com/viggy28/recall/commit/d9c2b3cb317d3d507d76914f79f189a7bde8d668))
+* avoid semantic indexing during startup ([bc0f75c](https://github.com/viggy28/recall/commit/bc0f75c7b4b6618c3cd6a0e69fe2dc95e200f5e8))
+* **graph:** make html explorer interactions work (click, drag, pan) ([b61af53](https://github.com/viggy28/recall/commit/b61af5333dce2c9321310b8e3f22997760642ab0))
+* **graph:** make html explorer interactions work (click, drag, pan) ([db24d65](https://github.com/viggy28/recall/commit/db24d6593206aa068170d9839fb934105a710c1c))
+* harden source context collection ([da7a827](https://github.com/viggy28/recall/commit/da7a827c678f14eb7f4bf66971d83253db8a62ca))
+* reject semantic TUI without embeddings ([99fe826](https://github.com/viggy28/recall/commit/99fe826eeeb4968472ede0c86a98baa5a2537c5e))
+* show context creation progress ([05cb486](https://github.com/viggy28/recall/commit/05cb486cb540c1ae23b419105be0b9b2cc1201e9))
+* show progress during context creation ([c8bc97a](https://github.com/viggy28/recall/commit/c8bc97a83685dbc14c954d2f1624a0b7fbbc6a25))
+
 ## [0.4.0](https://github.com/viggy28/recall/compare/v0.3.1...v0.4.0) (2026-08-20)
 
 
