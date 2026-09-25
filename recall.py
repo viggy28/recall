@@ -2331,8 +2331,14 @@ def main(argv=None):
         init_db(conn)
         if not args.no_index:
             index_all(conn, quiet=True)
-            if args.semantic and _pending_embed_count(conn):
-                build_embeddings(conn)
+        if args.semantic:
+            if not conn.execute("SELECT 1 FROM embeddings LIMIT 1").fetchone():
+                print("no embeddings yet — run:  recall index -s", file=sys.stderr)
+                raise SystemExit(1)
+            error = _semantic_dependency_error()
+            if error:
+                print(error, file=sys.stderr)
+                raise SystemExit(1)
         tui(conn, args)
         return
 
@@ -2377,8 +2383,6 @@ def main(argv=None):
         init_db(conn)
         if not args.no_index:
             index_all(conn, quiet=True)
-            if args.semantic and _pending_embed_count(conn):
-                build_embeddings(conn)
         if args.regex:
             rows = search_regex(conn, args)
         elif args.semantic:
