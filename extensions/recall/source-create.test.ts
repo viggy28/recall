@@ -39,7 +39,7 @@ test("rejects blank source_path and source_path on non-create actions", async ()
   await assert.rejects(contextTool.execute("call", { action: "show", name: "recall", source_path: "/tmp/repo" }, undefined, undefined, {}), /only for create/);
 });
 
-test("non-TUI creation cancels without model or filesystem work", async () => {
+test("non-TUI creation fails loudly without model or filesystem work", async () => {
   const contextTool = registeredContextTool();
   let confirms = 0;
   const result = await contextTool.execute(
@@ -63,7 +63,9 @@ test("non-TUI creation cancels without model or filesystem work", async () => {
     },
   );
   assert.equal(confirms, 0);
-  assert.equal(result.details.status, "cancelled");
+  assert.equal(result.details.status, "failed");
+  assert.match(result.content[0].text, /failed/i);
+  assert.match(result.details.error, /TUI mode/);
 });
 
 test("context generation shows cancellable progress after approval", async (t) => {
@@ -186,4 +188,103 @@ test("denying source approval does not access the path or generate", async () =>
   assert.equal(execOptions.every((options) => options.cwd === tmpdir()), true);
   assert.equal(result.details.status, "cancelled");
   assert.match(result.content[0].text, /no file was written/);
+});
+
+test("update surfaces proposal failure instead of cancelled", async () => {
+  const { mkdtemp, mkdir, writeFile, readFile } = await import("node:fs/promises");
+  const { homedir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = await mkdtemp(join(tmpdir(), "recall-update-fail-"));
+  // Point contexts dir via writing into real home contexts with unique name
+  const name = `upd-fail-${process.pid}-${Date.now()}`;
+  const contextsDir = join(homedir(), ".recall", "contexts");
+  await mkdir(contextsDir, { recursive: true });
+  const path = join(contextsDir, `${name}.md`);
+  await writeFile(path, `# ${name}\n## Current state\n- old fact\n`, "utf8");
+  try {
+    const contextTool = registeredContextTool();
+    const notifies: string[] = [];
+    const result = await contextTool.execute(
+      "call",
+      { action: "update", name, instruction: "Add a new fact about progress." },
+      new AbortController().signal,
+      () => {},
+      {
+        hasUI: true,
+        mode: "tui",
+        cwd: dir,
+        model: { provider: "test-provider", id: "test-model", api: "openai-completions" },
+        ui: {
+          async custom() {
+            // Simulate custom UI never binding (undefined), so generation falls through
+            return undefined;
+          },
+          async confirm() { throw new Error("confirm should not run when proposal fails"); },
+          async editor() { throw new Error("editor must not be called"); },
+          notify(message: string) { notifies.push(message); },
+        },
+        sessionManager: { getBranch() { return []; } },
+        modelRegistry: {
+          async getApiKeyAndHeaders() {
+            return { ok: false, error: "No API key found for \"test-provider\"" };
+          },
+        },
+      },
+    );
+    assert.equal(result.details.status, "failed");
+    assert.match(result.content[0].text, /Context update failed/);
+    assert.match(result.content[0].text, /No API key/);
+    assert.match(result.details.error, /No API key/);
+    // File unchanged
+    assert.match(await readFile(path, "utf8"), /old fact/);
+  } finally {
+    await import("node:fs/promises").then((fs) => fs.unlink(path).catch(() => undefined));
+  }
+});
+
+test("update with broken provider reports failed, never silent cancelled", async () => {
+  const { mkdir, writeFile, readFile, unlink } = await import("node:fs/promises");
+  const { homedir } = await import("node:os");
+  const { join } = await import("node:path");
+
+  const name = `upd-rpc-${process.pid}-${Date.now()}`;
+  const contextsDir = join(homedir(), ".recall", "contexts");
+  await mkdir(contextsDir, { recursive: true });
+  const path = join(contextsDir, `${name}.md`);
+  const original = `# ${name}\n## Current state\n- old fact\n`;
+  await writeFile(path, original, "utf8");
+
+  const contextTool = registeredContextTool();
+  try {
+    const result = await contextTool.execute(
+      "call",
+      { action: "update", name, instruction: "Change old fact to new fact." },
+      new AbortController().signal,
+      () => {},
+      {
+        hasUI: true,
+        mode: "rpc",
+        cwd: tmpdir(),
+        model: { provider: "test-provider", id: "test-model", api: "openai-completions" },
+        ui: {
+          async custom() { return undefined; },
+          async confirm() { return true; },
+          async editor() { throw new Error("editor must not be called"); },
+          notify() {},
+        },
+        sessionManager: { getBranch() { return []; } },
+        modelRegistry: {
+          async getApiKeyAndHeaders() {
+            return { ok: true, apiKey: "test-key", headers: {} };
+          },
+        },
+      },
+    );
+    // Without a real provider endpoint, complete() fails — must be failed, never silent cancelled.
+    assert.equal(result.details.status, "failed");
+    assert.match(result.content[0].text, /Context update failed/);
+    assert.equal(await readFile(path, "utf8"), original);
+  } finally {
+    await unlink(path).catch(() => undefined);
+  }
 });
