@@ -504,12 +504,28 @@ function contextDigest(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
-function parseContextPatch(response: string): ContextEdit[] {
+function extractJsonPayload(response: string): string {
   let text = response.trim();
+  if (!text) throw new Error("The model returned an empty context patch.");
   if (text.startsWith("```")) {
     const lines = text.split("\n");
-    if (lines.length >= 3 && lines.at(-1)?.trim() === "```") text = lines.slice(1, -1).join("\n");
+    if (lines.length >= 2) {
+      let end = -1;
+      for (let index = lines.length - 1; index >= 1; index--) {
+        if (lines[index]!.trim() === "```") { end = index; break; }
+      }
+      text = lines.slice(1, end > 0 ? end : undefined).join("\n").trim();
+    }
   }
+  if (text.startsWith("{") && text.endsWith("}")) return text;
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start >= 0 && end > start) return text.slice(start, end + 1);
+  return text;
+}
+
+function parseContextPatch(response: string): ContextEdit[] {
+  const text = extractJsonPayload(response);
   let payload: unknown;
   try {
     payload = JSON.parse(text);
@@ -627,51 +643,92 @@ Each old_text must be a non-empty, exact, unique substring. Edits must not overl
 <context>\n${original}\n</context>`;
 }
 
+async function generateContextProposal(
+  ctx: ExtensionContext,
+  name: string,
+  original: string,
+  instruction: string,
+  signal?: AbortSignal,
+): Promise<ContextProposal> {
+  if (!ctx.model) throw new Error("No model is selected in Pi.");
+  if (signal?.aborted) throw new DOMException("Context update aborted.", "AbortError");
+  const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
+  // Cloudflare AI Gateway auth can be header-only (cf-aig-authorization) with no apiKey.
+  if (!auth.ok) throw new Error(auth.error);
+  if (!auth.apiKey && !auth.headers?.["cf-aig-authorization"]) {
+    throw new Error(`No API key for ${ctx.model.provider}`);
+  }
+  const prompt: Message = {
+    role: "user",
+    content: [{ type: "text", text: contextUpdatePrompt(name, original, instruction) }],
+    timestamp: Date.now(),
+  };
+  const response = await complete(
+    ctx.model,
+    { systemPrompt: "Propose precise, minimal updates to a Recall context. Return only the requested JSON.", messages: [prompt] },
+    {
+      apiKey: auth.apiKey,
+      headers: auth.headers,
+      env: auth.env,
+      signal,
+      cacheRetention: "none",
+      sessionId: uuidv7(),
+    },
+  );
+  if (response.stopReason === "aborted" || signal?.aborted) {
+    throw new DOMException("Context update aborted.", "AbortError");
+  }
+  if (response.stopReason === "error") {
+    const detail = response.errorMessage?.trim() || response.content
+      .filter((block): block is { type: "text"; text: string } => block.type === "text")
+      .map((block) => block.text).join("\n").trim();
+    throw new Error(detail || `Context update proposal failed (${ctx.model.provider}/${ctx.model.id}).`);
+  }
+  const text = response.content
+    .filter((block): block is { type: "text"; text: string } => block.type === "text")
+    .map((block) => block.text).join("\n");
+  if (!text.trim()) {
+    throw new Error(`The model returned no text patch content (${ctx.model.provider}/${ctx.model.id}, stop=${response.stopReason}).`);
+  }
+  const edits = parseContextPatch(text);
+  const updated = applyContextPatch(original, edits);
+  return { updated, edits, diff: focusedContextDiff(name, edits) };
+}
+
 async function proposeContextUpdate(
   ctx: ExtensionContext,
   name: string,
   original: string,
   instruction: string,
   outerSignal?: AbortSignal,
-): Promise<ContextProposal | null> {
-  if (!ctx.model) throw new Error("No model is selected in Pi.");
-  return ctx.ui.custom<ContextProposal | null>((tui, theme, _keybindings, done) => {
-    const loader = new BorderedLoader(tui, theme, `Finding every affected statement in ${name}…`);
-    loader.onAbort = () => done(null);
-    void (async () => {
-      const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model!);
-      if (!auth.ok || !auth.apiKey) throw new Error(auth.ok ? `No API key for ${ctx.model!.provider}` : auth.error);
-      const prompt: Message = {
-        role: "user",
-        content: [{ type: "text", text: contextUpdatePrompt(name, original, instruction) }],
-        timestamp: Date.now(),
-      };
-      const response = await complete(
-        ctx.model!,
-        { systemPrompt: "Propose precise, minimal updates to a Recall context. Return only the requested JSON.", messages: [prompt] },
-        {
-          apiKey: auth.apiKey,
-          headers: auth.headers,
-          env: auth.env,
-          signal: outerSignal ? AbortSignal.any([loader.signal, outerSignal]) : loader.signal,
-          cacheRetention: "none",
-          sessionId: uuidv7(),
-        },
-      );
-      if (response.stopReason === "aborted") return null;
-      const text = response.content
-        .filter((block): block is { type: "text"; text: string } => block.type === "text")
-        .map((block) => block.text).join("\n");
-      const edits = parseContextPatch(text);
-      const updated = applyContextPatch(original, edits);
-      return { updated, edits, diff: focusedContextDiff(name, edits) };
-    })().then(done).catch((error) => {
-      console.error("Recall context update proposal failed:", error);
-      ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
-      done(null);
+): Promise<ContextProposal> {
+  // Generation must not depend on TUI custom(). custom() is a no-op in RPC/print and can
+  // also be displaced when tools run in parallel. Only the optional progress loader uses it.
+  if (ctx.mode === "tui" && ctx.hasUI) {
+    const viaLoader = await ctx.ui.custom<ContextProposal | { error: string } | null>((tui, theme, _keybindings, done) => {
+      const loader = new BorderedLoader(tui, theme, `Finding every affected statement in ${name}…`);
+      loader.onAbort = () => done(null);
+      const signal = outerSignal ? AbortSignal.any([loader.signal, outerSignal]) : loader.signal;
+      void generateContextProposal(ctx, name, original, instruction, signal)
+        .then((proposal) => done(proposal))
+        .catch((error) => {
+          if (error instanceof DOMException && error.name === "AbortError") return done(null);
+          console.error("Recall context update proposal failed:", error);
+          const message = error instanceof Error ? error.message : String(error);
+          ctx.ui.notify(message, "error");
+          done({ error: message });
+        });
+      return loader;
     });
-    return loader;
-  });
+    // undefined => custom() unavailable (should not happen in tui); null => user aborted loader
+    if (viaLoader === undefined) {
+      return generateContextProposal(ctx, name, original, instruction, outerSignal);
+    }
+    if (viaLoader === null) throw new DOMException("Context update aborted.", "AbortError");
+    if ("error" in viaLoader) throw new Error(viaLoader.error);
+    return viaLoader;
+  }
+  return generateContextProposal(ctx, name, original, instruction, outerSignal);
 }
 
 async function reviewContextText(
@@ -681,7 +738,14 @@ async function reviewContextText(
   markdown = false,
   preface: string[] = [],
 ): Promise<ContextReviewAction> {
-  if (ctx.mode !== "tui") return "cancel";
+  if (ctx.mode !== "tui") {
+    // Fall back to a plain confirm so writes still work when custom() is unavailable
+    // (RPC hosts, headless, or a TUI path that lost the custom binder).
+    if (!ctx.hasUI) return "cancel";
+    const preview = text.length > 3500 ? `${text.slice(0, 3500)}\n…` : text;
+    const approved = await ctx.ui.confirm(title, `${preview}\n\nApply these changes?`);
+    return approved ? "apply" : "cancel";
+  }
   return ctx.ui.custom<ContextReviewAction>((tui, theme, _keybindings, done) => {
     const rawLines = [title, "", ...preface, ...(preface.length ? [""] : []), ...text.split("\n")];
     let scroll = 0;
@@ -769,12 +833,24 @@ async function applyContextUpdate(name: string, original: string, updated: strin
   });
 }
 
+type ContextWriteResult = {
+  status: "updated" | "created" | "cancelled" | "aborted" | "failed" | "proposed";
+  path?: string;
+  diff?: string;
+  error?: string;
+};
+
+function isAbortError(error: unknown): boolean {
+  return (error instanceof DOMException && error.name === "AbortError")
+    || (error instanceof Error && error.name === "AbortError");
+}
+
 async function updateContextInteractively(
   ctx: ExtensionContext,
   name: string,
   initialInstruction?: string,
   signal?: AbortSignal,
-): Promise<{ status: "updated" | "cancelled" | "proposed"; path?: string; diff?: string }> {
+): Promise<ContextWriteResult> {
   if (!ctx.hasUI) throw new Error("Updating a context requires Pi's interactive UI.");
   const path = contextPath(name);
   const original = await readFile(path, "utf8");
@@ -783,12 +859,22 @@ async function updateContextInteractively(
   if (!instruction) return { status: "cancelled" };
 
   while (true) {
-    const proposal = await proposeContextUpdate(ctx, name, original, instruction, signal);
-    if (!proposal) return { status: "cancelled" };
-    if (ctx.mode !== "tui") return { status: "proposed", diff: proposal.diff };
+    let proposal: ContextProposal;
+    try {
+      proposal = await proposeContextUpdate(ctx, name, original, instruction, signal);
+    } catch (error) {
+      if (isAbortError(error) || signal?.aborted) return { status: "aborted" };
+      const message = error instanceof Error ? error.message : String(error);
+      return { status: "failed", error: message };
+    }
     const action = await reviewContextUpdate(ctx, name, proposal.diff);
-    if (action === "cancel") return { status: "cancelled" };
+    // undefined means the UI binder returned without a choice (broken/no-op custom).
+    if (!action || action === "cancel") return { status: "cancelled", diff: proposal.diff };
     if (action === "revise") {
+      if (ctx.mode !== "tui") {
+        // Non-TUI hosts only have confirm/select/input; surface the proposal for the agent/user.
+        return { status: "proposed", diff: proposal.diff };
+      }
       const revised = await ctx.ui.editor(`Revise the update for ${name}`, instruction);
       if (revised?.trim()) instruction = revised.trim();
       continue;
@@ -974,8 +1060,17 @@ async function createContextFromCanonicalBackend(
   initialFocus?: string,
   signal?: AbortSignal,
   sourcePath?: string,
-): Promise<{ status: "created" | "cancelled"; path?: string }> {
-  if (!ctx.hasUI || ctx.mode !== "tui") return { status: "cancelled" };
+): Promise<ContextWriteResult> {
+  if (!ctx.hasUI) {
+    return { status: "failed", error: "Creating a context requires Pi's interactive UI (ctx.hasUI is false)." };
+  }
+  if (ctx.mode !== "tui") {
+    // Source selection and draft review need a real terminal. Do not pretend the user cancelled.
+    return {
+      status: "failed",
+      error: `Context creation needs Pi TUI mode for source selection and draft review (current mode: ${ctx.mode}). Use /recall in an interactive Pi session, or run: recall context create ${name}`,
+    };
+  }
   const path = contextPath(name);
   try { await stat(path); throw new Error(`${name} already exists. Ask to update it instead.`); }
   catch (error: any) { if (error?.code !== "ENOENT") throw error; }
@@ -1432,7 +1527,11 @@ export default function recallExtension(pi: ExtensionAPI) {
         const result = await createContextFromCanonicalBackend(pi, ctx, params.name, params.instruction, signal, params.source_path);
         const text = result.status === "created"
           ? `Created and verified ${result.path}`
-          : "Context creation cancelled; no file was written.";
+          : result.status === "failed"
+            ? `Context creation failed; no file was written. ${result.error}`
+            : result.status === "aborted"
+              ? "Context creation aborted; no file was written."
+              : "Context creation cancelled; no file was written.";
         return { content: [{ type: "text", text }], details: result };
       }
       const resolvedName = await resolveExistingContextName(params.name);
@@ -1443,7 +1542,13 @@ export default function recallExtension(pi: ExtensionAPI) {
           ? `Updated and verified ${result.path}. Previous revision retained; use Undo last update in /recall.`
           : result.status === "proposed"
             ? `Proposed changes (not applied):\n\n${result.diff}`
-            : "Context update cancelled; no changes were written.";
+            : result.status === "failed"
+              ? `Context update failed; no changes were written. ${result.error}`
+              : result.status === "aborted"
+                ? "Context update aborted; no changes were written."
+                : result.diff
+                  ? `Context update cancelled; no changes were written.\n\nProposed changes (not applied):\n\n${result.diff}`
+                  : "Context update cancelled; no changes were written.";
         return { content: [{ type: "text", text }], details: result };
       }
       const path = contextPath(resolvedName);
