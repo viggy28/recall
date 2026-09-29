@@ -732,6 +732,7 @@ async function proposeContextUpdate(
 }
 
 async function reviewContextText(
+  pi: ExtensionAPI,
   ctx: ExtensionContext,
   title: string,
   text: string,
@@ -746,7 +747,16 @@ async function reviewContextText(
     const approved = await ctx.ui.confirm(title, `${preview}\n\nApply these changes?`);
     return approved ? "apply" : "cancel";
   }
-  return ctx.ui.custom<ContextReviewAction>((tui, theme, _keybindings, done) => {
+  const attentionId = `recall-review:${uuidv7()}`;
+  pi.events.emit("pi:attention-required", {
+    id: attentionId,
+    title: "Pi needs your attention",
+    body: `${title} is ready for review.`,
+    source: "recall_context",
+    mode: ctx.mode,
+  });
+  try {
+    return await ctx.ui.custom<ContextReviewAction>((tui, theme, _keybindings, done) => {
     const rawLines = [title, "", ...preface, ...(preface.length ? [""] : []), ...text.split("\n")];
     let scroll = 0;
     let lastPageSize = 22;
@@ -811,11 +821,14 @@ async function reviewContextText(
       },
       invalidate() {},
     };
-  });
+    });
+  } finally {
+    pi.events.emit("pi:attention-resolved", { id: attentionId, source: "recall_context", mode: ctx.mode });
+  }
 }
 
-async function reviewContextUpdate(ctx: ExtensionContext, name: string, diff: string): Promise<ContextReviewAction> {
-  return reviewContextText(ctx, `Update ${name}`, diff);
+async function reviewContextUpdate(pi: ExtensionAPI, ctx: ExtensionContext, name: string, diff: string): Promise<ContextReviewAction> {
+  return reviewContextText(pi, ctx, `Update ${name}`, diff);
 }
 
 async function applyContextUpdate(name: string, original: string, updated: string): Promise<string> {
@@ -846,6 +859,7 @@ function isAbortError(error: unknown): boolean {
 }
 
 async function updateContextInteractively(
+  pi: ExtensionAPI,
   ctx: ExtensionContext,
   name: string,
   initialInstruction?: string,
@@ -867,7 +881,7 @@ async function updateContextInteractively(
       const message = error instanceof Error ? error.message : String(error);
       return { status: "failed", error: message };
     }
-    const action = await reviewContextUpdate(ctx, name, proposal.diff);
+    const action = await reviewContextUpdate(pi, ctx, name, proposal.diff);
     // undefined means the UI binder returned without a choice (broken/no-op custom).
     if (!action || action === "cancel") return { status: "cancelled", diff: proposal.diff };
     if (action === "revise") {
@@ -1135,7 +1149,7 @@ async function createContextFromCanonicalBackend(
   }
   try {
     while (true) {
-      const action = await reviewContextText(ctx, `Create ${name}`, draft, true);
+      const action = await reviewContextText(pi, ctx, `Create ${name}`, draft, true);
       if (action === "cancel") return { status: "cancelled" };
       if (action === "revise") {
         const revised = await ctx.ui.editor(`Revise the focus for ${name}`, focus.label);
@@ -1238,7 +1252,7 @@ async function manageContexts(pi: ExtensionAPI, ctx: ExtensionCommandContext): P
     const path = contextPath(name);
     const text = await readFile(path, "utf8");
     if (action === "update") {
-      await updateContextInteractively(ctx, name);
+      await updateContextInteractively(pi, ctx, name);
     } else if (action === "attach") {
       attachContext(pi, name, text);
       ctx.ui.notify(`Attached ${name}`, "info");
@@ -1537,7 +1551,7 @@ export default function recallExtension(pi: ExtensionAPI) {
       const resolvedName = await resolveExistingContextName(params.name);
       if (params.action === "update") {
         if (!params.instruction?.trim()) throw new Error("update requires the user's exact instruction");
-        const result = await updateContextInteractively(ctx, resolvedName, params.instruction, signal);
+        const result = await updateContextInteractively(pi, ctx, resolvedName, params.instruction, signal);
         const text = result.status === "updated"
           ? `Updated and verified ${result.path}. Previous revision retained; use Undo last update in /recall.`
           : result.status === "proposed"

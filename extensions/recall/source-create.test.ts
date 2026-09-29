@@ -76,11 +76,15 @@ test("context generation shows cancellable progress after approval", async (t) =
   let loaderComponent: any;
   t.after(() => loaderComponent?.dispose?.());
   let generationSignal: AbortSignal | undefined;
+  const attentionEvents: Array<{ name: string; data: any }> = [];
   let releaseGeneration!: () => void;
   const source = tmpdir();
   const generationGate = new Promise<void>((resolve) => { releaseGeneration = resolve; });
   const pi = {
     registerCommand() {},
+    events: {
+      emit(name: string, data: any) { attentionEvents.push({ name, data }); },
+    },
     async exec(_binary: string, args: string[], options: any) {
       if (args.includes("source-info")) {
         return { code: 0, stdout: JSON.stringify({ path: source, disclosure: `Path: ${source}` }), stderr: "" };
@@ -144,6 +148,12 @@ test("context generation shows cancellable progress after approval", async (t) =
   assert.ok(generationSignal instanceof AbortSignal);
   assert.equal(result.details.status, "cancelled");
   assert.equal(customCalls, 2);
+  assert.deepEqual(attentionEvents.map((event) => event.name), [
+    "pi:attention-required",
+    "pi:attention-resolved",
+  ]);
+  assert.match(attentionEvents[0].data.body, /Create .* is ready for review/);
+  assert.equal(attentionEvents[0].data.id, attentionEvents[1].data.id);
 });
 
 test("denying source approval does not access the path or generate", async () => {
