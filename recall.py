@@ -2,7 +2,7 @@
 """recall — a local knowledge base built from coding-agent conversations.
 
 Indexes transcripts from multiple harnesses (Claude Code, Codex, OpenCode,
-and Pi) into one local SQLite database and searches them three ways:
+Pi, and ChatGPT exports) into one local SQLite database and searches them three ways:
 
   fuzzy     (default)  forgiving keyword recall  — FTS5 porter + trigram (+ optional typo)
   regex     (-e)       exact pattern matching    — Python re registered as SQLite REGEXP
@@ -86,8 +86,9 @@ TUI_MIN_QUERY_CHARS = 2
 
 
 from recall_core.ingestion import (
-    CHUNK_MAX, CHUNK_TARGET, EMBED_MODEL, ClaudeCodeSource, CodexSource,
-    OpenCodeSource, PiSource, Source, _cap, _codex_root, _codex_text, _epoch,
+    CHUNK_MAX, CHUNK_TARGET, EMBED_MODEL, ChatGPTSource, ClaudeCodeSource,
+    CodexSource, OpenCodeSource, PiSource, Source, _cap, _chatgpt_path,
+    _codex_root, _codex_text, _epoch,
     _flatten_content, _nl_content, _pi_flatten, _pi_root,
 )
 
@@ -482,6 +483,8 @@ def _resume_target(conn, session_id, recorded_project, source="claude-code"):
     """
     if recorded_project and os.path.isdir(recorded_project):
         return recorded_project, "ok"
+    if source == "chatgpt":
+        return str(HOME), "unsupported"
     if source != "claude-code":
         # Pi (transcript path) and Codex (session UUID) resume by a stable arg,
         # not by cwd-scoped folder decoding — so cwd is just a landing dir.
@@ -603,7 +606,7 @@ def _recent_sessions(conn, limit=50):
         )
         SELECT m.session_id, m.source, m.path, m.project, m.ts, m.type,
                COALESCE((SELECT MAX(f.present) FROM files f
-                         WHERE f.session_id=m.session_id AND f.source=m.source), 1) AS present
+                         WHERE f.path=m.path AND f.source=m.source), 1) AS present
         FROM ranked m
         WHERE m.recency_rank=1
         ORDER BY m.epoch DESC
@@ -636,7 +639,7 @@ def render_recent_json(conn, limit=50):
         out.append({
             "session_id": e["session_id"], "source": e["source"],
             "title": e["title"], "project": e["project"], "ts": e["ts"],
-            "type": e["type"], "resumable": e["present"],
+            "type": e["type"], "resumable": e["resume_status"] not in ("archived", "unsupported"),
             "resume_path": e["resume_path"], "resume_status": e["resume_status"],
             "resume_arg": e["resume_arg"], "snippet": "",
         })
@@ -647,10 +650,12 @@ _TAG = {  # resume_status → (project tag, legend line)
     "recovered": (" ↻moved", "↻moved = project was renamed (resolved automatically)"),
     "missing": (" ⚠gone", "⚠gone = project path no longer exists"),
     "archived": (" ⛌archived", "⛌archived = transcript deleted (searchable, not resumable)"),
+    "unsupported": (" ·imported", "imported = searchable conversation (not resumable)"),
 }
 
 
-_SRC_LABEL = {"claude-code": "claude", "pi": "pi", "codex": "codex", "opencode": "opencode"}
+_SRC_LABEL = {"claude-code": "claude", "pi": "pi", "codex": "codex",
+              "opencode": "opencode", "chatgpt": "chatgpt"}
 
 
 def _src_label(source) -> str:
@@ -727,7 +732,8 @@ def render(conn, rows, args):
             rec = {
                 "session_id": e["session_id"], "source": e["source"],
                 "title": e["title"], "project": e["project"],
-                "ts": e["ts"], "type": e["type"], "resumable": e["present"],
+                "ts": e["ts"], "type": e["type"],
+                "resumable": e["resume_status"] not in ("archived", "unsupported"),
                 "resume_path": e["resume_path"], "resume_status": e["resume_status"],
                 "resume_arg": e["resume_arg"],
                 "snippet": re.sub(r"\033\[[0-9;]*m", "", e["snip"]),
@@ -790,7 +796,8 @@ def render(conn, rows, args):
     # `#` is the row number, the 8-char id is the session — either resumes it
     print(_paint("resume a session by # or id: ", C_DIM) + _paint("recall go <#|id>", C_HITS)
           + _paint(f"   ·  {foot}", C_DIM))
-    shown = [_TAG[s][1] for s in ("recovered", "missing", "archived") if s in tags_seen]
+    shown = [_TAG[s][1] for s in ("recovered", "missing", "archived", "unsupported")
+             if s in tags_seen]
     if shown:
         print(_paint("  " + "   ".join(shown), C_DIM))
 
@@ -810,6 +817,9 @@ def _resume(sid, status, path, source="claude-code", resume_arg=None,
     <transcript-path>` (path-based, so it resolves the exact session)."""
     pre = f"{label} " if label else ""
     resume_arg = resume_arg or sid
+    if source == "chatgpt" or status == "unsupported":
+        print(f"{pre}{sid[:8]} is an imported ChatGPT conversation and cannot be resumed locally.")
+        return
     if source == "pi":
         argv = ["pi", "--session", resume_arg]
     elif source == "codex":
@@ -2141,7 +2151,7 @@ def _add_search_flags(p):
     mode.add_argument("-s", "--semantic", action="store_true", help="semantic (meaning) mode")
     p.add_argument("--typo", action="store_true", help="fuzzy: tolerate typos (edit-distance)")
     p.add_argument("--project", help="filter: project path substring")
-    p.add_argument("--source", choices=["claude", "pi", "codex", "opencode"], help="filter: harness")
+    p.add_argument("--source", choices=["claude", "pi", "codex", "opencode", "chatgpt"], help="filter: harness")
     p.add_argument("--role", choices=["user", "assistant"], help="filter: message role")
     p.add_argument("--since", help="filter: on/after YYYY-MM-DD")
     p.add_argument("--until", help="filter: on/before YYYY-MM-DD")
@@ -2175,7 +2185,7 @@ def main(argv=None):
     pgraph.add_argument("--format", choices=["json", "dot", "html"], default="json",
                         help="output format: json, dot, or a self-contained html explorer (default: json)")
     pgraph.add_argument("-o", "--output", help="write to a file instead of stdout")
-    pgraph.add_argument("--source", choices=["claude", "pi", "codex"], help="filter: harness")
+    pgraph.add_argument("--source", choices=["claude", "pi", "codex", "opencode", "chatgpt"], help="filter: harness")
     pgraph.add_argument("--project", help="filter: project path substring")
     pgraph.add_argument("--since", help="filter: on/after YYYY-MM-DD")
     pgraph.add_argument("--until", help="filter: on/before YYYY-MM-DD")
@@ -2203,7 +2213,7 @@ def main(argv=None):
     tmode.add_argument("-s", "--semantic", action="store_true", help="start in semantic mode")
     pt.add_argument("--typo", action="store_true", help="fuzzy: tolerate typos")
     pt.add_argument("--project", help="filter: project path substring")
-    pt.add_argument("--source", choices=["claude", "pi", "codex", "opencode"], help="filter: harness")
+    pt.add_argument("--source", choices=["claude", "pi", "codex", "opencode", "chatgpt"], help="filter: harness")
     pt.add_argument("--role", choices=["user", "assistant"], help="filter: message role")
     pt.add_argument("--since", help="filter: on/after YYYY-MM-DD")
     pt.add_argument("--until", help="filter: on/before YYYY-MM-DD")

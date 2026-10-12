@@ -8,7 +8,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .ingestion import ClaudeCodeSource, CodexSource, OpenCodeSource, PiSource, _epoch
+from .ingestion import ChatGPTSource, ClaudeCodeSource, CodexSource, OpenCodeSource, PiSource, _epoch
 
 HOME = Path.home()
 STATE_DIR = HOME / ".recall"
@@ -198,8 +198,11 @@ def _reindex_file(conn, source, path, row, full: bool):
         if size == row["size"] and mtime == row["mtime"]:
             conn.execute("UPDATE files SET present=1 WHERE path=?", (path_key,))
             return 0
+        # Whole-document exports are rewritten snapshots, never append-only logs.
+        if source.whole_document:
+            conn.execute("DELETE FROM messages WHERE path=?", (path_key,))
         # grew → append from stored offset (offset sits on a line boundary)
-        if size > row["size"]:
+        elif size > row["size"]:
             offset, base_line = row["byte_offset"], row["lines"]
         else:
             # shrank or same-size rewrite → full replacement
@@ -209,26 +212,30 @@ def _reindex_file(conn, source, path, row, full: bool):
         # since subagent transcripts share a session_id with their parent session)
         conn.execute("DELETE FROM messages WHERE path=?", (path_key,))
 
-    with open(path, "rb") as fh:
-        fh.seek(offset)
-        raw = fh.read()
-
-    # Hold back a trailing partial line using raw byte positions. Measuring the
-    # repaired Unicode text would corrupt the next offset when invalid UTF-8 was
-    # replaced by the three-byte U+FFFD representation.
-    if raw and not raw.endswith(b"\n"):
-        newline = raw.rfind(b"\n")
-        if newline == -1:
-            complete, consumed = b"", offset
-        else:
-            complete, consumed = raw[:newline + 1], offset + newline + 1
+    if source.whole_document:
+        complete = source.read_bytes(path)
+        consumed = size
     else:
-        complete, consumed = raw, offset + len(raw)
+        with open(path, "rb") as fh:
+            fh.seek(offset)
+            raw = fh.read()
+
+        # Hold back a trailing partial line using raw byte positions. Measuring the
+        # repaired Unicode text would corrupt the next offset when invalid UTF-8 was
+        # replaced by the three-byte U+FFFD representation.
+        if raw and not raw.endswith(b"\n"):
+            newline = raw.rfind(b"\n")
+            if newline == -1:
+                complete, consumed = b"", offset
+            else:
+                complete, consumed = raw[:newline + 1], offset + newline + 1
+        else:
+            complete, consumed = raw, offset + len(raw)
     encoding = "utf-8-sig" if offset == 0 else "utf-8"
     text = complete.decode(encoding, errors="replace")
-    # `complete` is empty or newline-terminated; split only on JSONL's byte
-    # delimiter so valid Unicode line-separator characters remain in strings.
-    lines = text.split("\n")[:-1]
+    # Whole-document readers parse the complete JSON value. JSONL readers split
+    # only on its byte delimiter so Unicode line-separator characters survive.
+    lines = [text] if source.whole_document and text else text.split("\n")[:-1]
     records = list(source.parse_lines(lines))
 
     # resolve project (cwd) from any record that carries it. On an incremental
@@ -251,8 +258,9 @@ def _reindex_file(conn, source, path, row, full: bool):
         txt, nl, role, rtype = out
         ts = source.record_ts(rec)
         ep = _epoch(ts) if ts else mtime
+        record_sid = _sanitize_db_text(source.record_session_id(rec, path))
         rows.append(_sanitize_db_row((
-            path_key, sid, source.name, project, role, rtype,
+            path_key, record_sid, source.name, project, role, rtype,
             ts or file_mtime_iso, ep, base_line + i, txt, nl,
         )))
         added += 1
@@ -273,7 +281,7 @@ def _reindex_file(conn, source, path, row, full: bool):
 
 
 # harnesses indexed together — a single DB holds all sources, results mix + tag.
-SOURCES = [ClaudeCodeSource, PiSource, CodexSource, OpenCodeSource]
+SOURCES = [ClaudeCodeSource, PiSource, CodexSource, OpenCodeSource, ChatGPTSource]
 
 
 def _index_opencode(conn, source, full=False, purge_missing=False, quiet=False):

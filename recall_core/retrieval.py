@@ -23,7 +23,8 @@ def _fts_terms(query: str) -> list[str]:
 
 # friendly --source values → the stored `source` column value
 _SOURCE_ALIAS = {"claude": "claude-code", "claude-code": "claude-code",
-                 "pi": "pi", "codex": "codex", "opencode": "opencode"}
+                 "pi": "pi", "codex": "codex", "opencode": "opencode",
+                 "chatgpt": "chatgpt"}
 
 
 def _filters(args):

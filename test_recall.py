@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+import zipfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -1052,6 +1053,7 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         from recall_core import ingestion
 
         self.assertIs(recall.Source, ingestion.Source)
+        self.assertIs(recall.ChatGPTSource, ingestion.ChatGPTSource)
         self.assertIs(recall.ClaudeCodeSource, ingestion.ClaudeCodeSource)
         self.assertIs(recall.PiSource, ingestion.PiSource)
         self.assertIs(recall.CodexSource, ingestion.CodexSource)
@@ -1073,6 +1075,129 @@ class CoreModuleBoundaryTests(unittest.TestCase):
         self.assertIs(recall.index, indexing.index)
         self.assertIs(recall.search_fuzzy, retrieval.search_fuzzy)
         self.assertIs(recall.search_regex, retrieval.search_regex)
+
+
+class ChatGPTSourceTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.path = self.root / "conversations.json"
+        self.payload = [{
+            "id": "conv-1234",
+            "conversation_id": "conv-1234",
+            "title": "Retry design",
+            "create_time": 1_700_000_000,
+            "current_node": "assistant-new",
+            "mapping": {
+                "root": {"id": "root", "parent": None, "children": ["user"]},
+                "user": {
+                    "id": "user", "parent": "root",
+                    "children": ["assistant-old", "assistant-new"],
+                    "message": {
+                        "author": {"role": "user"}, "create_time": 1_700_000_001,
+                        "content": {"content_type": "text", "parts": ["How should retries work?"]},
+                    },
+                },
+                "assistant-old": {
+                    "id": "assistant-old", "parent": "user", "children": [],
+                    "message": {
+                        "author": {"role": "assistant"}, "create_time": 1_700_000_002,
+                        "content": {"content_type": "text", "parts": ["Use abandoned fixed delays."]},
+                    },
+                },
+                "assistant-new": {
+                    "id": "assistant-new", "parent": "user", "children": [],
+                    "message": {
+                        "author": {"role": "assistant"}, "create_time": 1_700_000_003,
+                        "content": {"content_type": "text", "parts": ["Use exponential backoff."]},
+                    },
+                },
+            },
+        }]
+        self.path.write_text(json.dumps(self.payload), encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_discovers_and_indexes_active_conversation_branch(self):
+        source = recall.ChatGPTSource(self.root)
+        conn = recall.connect(Path(self.root / "recall.db"))
+
+        self.assertEqual(source.files(), [self.path])
+        self.assertEqual(recall.index(conn, source=source, quiet=True), 3)
+        rows = conn.execute(
+            "SELECT session_id,source,role,type,text,ts FROM messages ORDER BY line_no"
+        ).fetchall()
+
+        self.assertEqual({row["session_id"] for row in rows}, {"conv-1234"})
+        self.assertTrue(all(row["source"] == "chatgpt" for row in rows))
+        self.assertEqual([(row["role"], row["type"], row["text"]) for row in rows], [
+            ("meta", "ai-title", "Retry design"),
+            ("user", "user", "How should retries work?"),
+            ("assistant", "assistant", "Use exponential backoff."),
+        ])
+        self.assertTrue(rows[1]["ts"].startswith("2023-11-14T"))
+        self.assertNotIn("abandoned", " ".join(row["text"] for row in rows))
+
+    def test_indexes_original_export_zip_and_filters_search_by_source(self):
+        archive_path = self.root / "chatgpt-export.zip"
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            archive.writestr("export/conversations.json", json.dumps(self.payload))
+        self.path.unlink()
+        conn = recall.connect(Path(self.root / "recall.db"))
+
+        self.assertEqual(recall.index(conn, source=recall.ChatGPTSource(archive_path), quiet=True), 3)
+        args = SimpleNamespace(query="backoff", typo=False, project=None, source="chatgpt",
+                               role=None, since=None, until=None, limit=10)
+        rows = recall.search_fuzzy(conn, args)
+
+        self.assertTrue(rows)
+        self.assertTrue(all(row["source"] == "chatgpt" for row in rows))
+
+    def test_rewritten_export_replaces_old_messages(self):
+        conn = recall.connect(Path(self.root / "recall.db"))
+        source = recall.ChatGPTSource(self.path)
+        self.assertEqual(recall.index(conn, source=source, quiet=True), 3)
+        self.payload[0]["mapping"]["assistant-new"]["message"]["content"]["parts"] = ["Use jitter."]
+        self.path.write_text(json.dumps(self.payload) + " ", encoding="utf-8")
+
+        self.assertEqual(recall.index(conn, source=source, quiet=True), 3)
+        texts = [row[0] for row in conn.execute("SELECT text FROM messages ORDER BY line_no")]
+        self.assertEqual(texts, ["Retry design", "How should retries work?", "Use jitter."])
+
+    def test_malformed_export_is_skipped_without_aborting(self):
+        self.path.write_text("not json", encoding="utf-8")
+        conn = recall.connect(Path(self.root / "recall.db"))
+        self.assertEqual(recall.index(
+            conn, source=recall.ChatGPTSource(self.path), quiet=True
+        ), 0)
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0], 0)
+
+    def test_malformed_conversation_does_not_hide_valid_conversations(self):
+        broken = {"id": "broken", "current_node": [],
+                  "mapping": {"bad": {"parent": [], "message": "invalid"}}}
+        self.path.write_text(json.dumps([broken, *self.payload]), encoding="utf-8")
+        conn = recall.connect(Path(self.root / "recall.db"))
+
+        self.assertEqual(recall.index(
+            conn, source=recall.ChatGPTSource(self.path), quiet=True
+        ), 3)
+        self.assertEqual(conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE session_id='conv-1234'"
+        ).fetchone()[0], 3)
+
+    def test_chatgpt_results_are_not_resumable(self):
+        conn = recall.connect(Path(self.root / "recall.db"))
+        recall.index(conn, source=recall.ChatGPTSource(self.path), quiet=True)
+        result = recall._recent_sessions(conn, 1)[0]
+        self.assertEqual(result["resume_status"], "unsupported")
+
+        out = io.StringIO()
+        with mock.patch.object(recall.subprocess, "run") as execute, redirect_stdout(out):
+            recall._resume(result["session_id"], result["resume_status"],
+                           result["resume_path"], source="chatgpt")
+        execute.assert_not_called()
+        self.assertIn("cannot be resumed", out.getvalue())
 
 
 class OpenCodeSourceTests(unittest.TestCase):
