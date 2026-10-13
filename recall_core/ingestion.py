@@ -8,13 +8,15 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 HOME = Path.home()
 PROJECTS_DIR = HOME / ".claude" / "projects"
 PI_SESSIONS_DIR = HOME / ".pi" / "agent" / "sessions"
 OPENCODE_DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", HOME / ".local" / "share")) / "opencode"
+CHATGPT_IMPORT_DIR = HOME / ".recall" / "imports" / "chatgpt"
 MAX_MSG_CHARS = 100_000
 MAX_TOOL_INPUT = 2_000
 TITLE_FIELDS = {
@@ -42,6 +44,12 @@ def _opencode_db() -> Path:
         path = Path(value).expanduser()
         return path if path.is_absolute() else OPENCODE_DATA_DIR / path
     return OPENCODE_DATA_DIR / "opencode.db"
+
+
+def _chatgpt_path() -> Path:
+    """ChatGPT export file/directory, defaulting to Recall's local import dir."""
+    value = os.environ.get("CHATGPT_EXPORT_PATH")
+    return Path(value).expanduser() if value else CHATGPT_IMPORT_DIR
 
 MAX_MSG_CHARS = 100_000      # cap a single message's indexed text
 MAX_TOOL_INPUT = 2_000       # cap a tool_use input blob
@@ -174,6 +182,7 @@ class Source:
     """Base reader. Subclasses set `name`, implement `files()`/`session_id()`/
     `extract()`, and override the record accessors if their field names differ."""
     name = "source"
+    whole_document = False
 
     @staticmethod
     def parse_lines(lines: list[str]):
@@ -194,6 +203,14 @@ class Source:
     def record_ts(self, record: dict):
         """ISO-8601 timestamp for this record (parsed by _epoch)."""
         return record.get("timestamp")
+
+    def record_session_id(self, record: dict, path: Path) -> str:
+        """Session id for a record; whole-document exports may override this."""
+        return self.session_id(path)
+
+    def read_bytes(self, path: Path) -> bytes:
+        """Read the source payload represented by path."""
+        return path.read_bytes()
 
     def extract(self, record: dict) -> tuple[str, str, str, str] | None:
         """Return (text, nl_text, role, type) for an indexable record, or None."""
@@ -364,6 +381,177 @@ class CodexSource(Source):
             q = (p.get("action") or {}).get("query", "")
             return (f"[tool: web_search] {q}", "", "tool", pt) if q else None
         return None                # reasoning (encrypted), tool_search_call, etc.
+
+
+def _chatgpt_iso(value) -> str | None:
+    """Normalize ChatGPT's Unix timestamps (or existing ISO strings) to UTC ISO."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        epoch = float(value)
+    except (TypeError, ValueError):
+        return value if isinstance(value, str) and _epoch(value) is not None else None
+    try:
+        return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat()
+    except (OSError, OverflowError, ValueError):
+        return None
+
+
+def _chatgpt_text(content) -> str:
+    """Extract textual parts from a ChatGPT export message content object."""
+    if not isinstance(content, dict):
+        return ""
+    parts = content.get("parts")
+    values: list[str] = []
+    if isinstance(parts, list):
+        for part in parts:
+            if isinstance(part, str):
+                values.append(part)
+            elif isinstance(part, dict):
+                value = part.get("text")
+                if isinstance(value, str):
+                    values.append(value)
+    direct = content.get("text")
+    if not values and isinstance(direct, str):
+        values.append(direct)
+    return "\n".join(value for value in values if value)
+
+
+class ChatGPTSource(Source):
+    """ChatGPT data exports (`conversations.json` or the original export ZIP).
+
+    Each export is one JSON array containing many conversation trees. Only the
+    branch ending at `current_node` is indexed, so regenerated/abandoned replies
+    do not appear beside the branch visible in ChatGPT.
+    """
+    name = "chatgpt"
+    whole_document = True
+
+    def __init__(self, root: Path | None = None):
+        self.root = root or _chatgpt_path()
+
+    def files(self) -> list[Path]:
+        if self.root.is_file():
+            return [self.root] if self.root.suffix.lower() in (".json", ".zip") else []
+        if not self.root.is_dir():
+            return []
+        paths = list(self.root.rglob("conversations*.json"))
+        paths.extend(self.root.rglob("*.zip"))
+        return sorted(set(paths))
+
+    @staticmethod
+    def session_id(path: Path) -> str:
+        return path.stem
+
+    def read_bytes(self, path: Path) -> bytes:
+        if path.suffix.lower() != ".zip":
+            return super().read_bytes(path)
+        try:
+            with zipfile.ZipFile(path) as archive:
+                candidates = [name for name in archive.namelist()
+                              if re.fullmatch(r"conversations(?:-\d+)?\.json",
+                                              name.rstrip("/").split("/")[-1])]
+                conversations = []
+                for member in sorted(candidates):
+                    try:
+                        value = json.loads(archive.read(member).decode("utf-8-sig"))
+                    except (KeyError, UnicodeDecodeError, json.JSONDecodeError):
+                        continue
+                    if isinstance(value, list):
+                        conversations.extend(value)
+                return json.dumps(conversations, ensure_ascii=False).encode("utf-8")
+        except (OSError, zipfile.BadZipFile):
+            return b""
+
+    @staticmethod
+    def _active_nodes(conversation: dict) -> list[dict]:
+        mapping = conversation.get("mapping")
+        if not isinstance(mapping, dict) or not mapping:
+            return []
+        current = conversation.get("current_node")
+        if not isinstance(current, str) or current not in mapping:
+            parents = {node.get("parent") for node in mapping.values()
+                       if isinstance(node, dict) and isinstance(node.get("parent"), str)}
+            leaves = [(key, node) for key, node in mapping.items()
+                      if isinstance(node, dict) and key not in parents]
+            if not leaves:
+                return []
+            def recency(item):
+                message = item[1].get("message") or {}
+                if not isinstance(message, dict):
+                    return 0.0
+                value = message.get("update_time") or message.get("create_time") or 0
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return 0.0
+            current = max(leaves, key=recency)[0]
+
+        branch: list[dict] = []
+        seen: set[str] = set()
+        while isinstance(current, str) and current in mapping and current not in seen:
+            seen.add(current)
+            node = mapping[current]
+            if not isinstance(node, dict):
+                break
+            branch.append(node)
+            current = node.get("parent")
+        branch.reverse()
+        return branch
+
+    @staticmethod
+    def parse_lines(lines: list[str]):
+        try:
+            payload = json.loads("\n".join(lines))
+        except (TypeError, json.JSONDecodeError):
+            return
+        conversations = payload if isinstance(payload, list) else payload.get("conversations", []) \
+            if isinstance(payload, dict) else []
+        offset = 0
+        for conversation in conversations:
+            if not isinstance(conversation, dict):
+                continue
+            sid = conversation.get("conversation_id") or conversation.get("id")
+            if not isinstance(sid, str) or not sid:
+                continue
+            base_ts = _chatgpt_iso(conversation.get("create_time") or conversation.get("update_time"))
+            title = conversation.get("title")
+            if isinstance(title, str) and title.strip():
+                yield {"kind": "title", "session_id": sid, "text": title.strip(),
+                       "timestamp": base_ts}, offset
+                offset += 1
+            for node in ChatGPTSource._active_nodes(conversation):
+                message = node.get("message")
+                if not isinstance(message, dict):
+                    continue
+                metadata = message.get("metadata") or {}
+                if isinstance(metadata, dict) and metadata.get("is_visually_hidden_from_conversation"):
+                    continue
+                author = message.get("author") or {}
+                role = author.get("role") if isinstance(author, dict) else None
+                if role not in ("user", "assistant"):
+                    continue
+                text = _chatgpt_text(message.get("content"))
+                if not text:
+                    continue
+                yield {"kind": "message", "session_id": sid, "role": role,
+                       "text": text,
+                       "timestamp": _chatgpt_iso(message.get("create_time")) or base_ts}, offset
+                offset += 1
+
+    def record_session_id(self, record: dict, path: Path) -> str:
+        return record.get("session_id") or self.session_id(path)
+
+    def extract(self, record: dict) -> tuple[str, str, str, str] | None:
+        text = record.get("text")
+        if not isinstance(text, str) or not text:
+            return None
+        if record.get("kind") == "title":
+            return (_cap(text), _cap(text), "meta", "ai-title")
+        role = record.get("role")
+        if role not in ("user", "assistant"):
+            return None
+        return (_cap(text, marker=True), _cap(text), role, role)
 
 
 def _opencode_flatten(parts) -> tuple[str, str]:

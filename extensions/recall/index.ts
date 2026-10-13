@@ -29,7 +29,7 @@ const CONTEXT_HISTORY_DIR = join(homedir(), ".recall", "context-history");
 const CONTEXT_NAME = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 type SearchMode = "fuzzy" | "regex" | "semantic";
-type RecallSource = "claude-code" | "pi" | "codex";
+type RecallSource = "claude-code" | "pi" | "codex" | "opencode" | "chatgpt";
 
 type RecallResult = {
   session_id: string;
@@ -117,7 +117,7 @@ async function searchBackend(
   pi: ExtensionAPI,
   query: string,
   mode: SearchMode = "fuzzy",
-  source?: "claude" | "pi" | "codex",
+  source?: "claude" | "pi" | "codex" | "opencode" | "chatgpt",
   limit = 20,
   signal?: AbortSignal,
   cwd?: string,
@@ -1297,7 +1297,11 @@ async function handleResult(
   ctx: ExtensionCommandContext,
   result: RecallResult,
 ): Promise<boolean> {
-  const source = result.source === "claude-code" ? "Claude Code" : result.source === "codex" ? "Codex" : "Pi";
+  const source = result.source === "claude-code" ? "Claude Code"
+    : result.source === "codex" ? "Codex"
+    : result.source === "opencode" ? "OpenCode"
+    : result.source === "chatgpt" ? "ChatGPT"
+    : "Pi";
   const actions = result.source === "pi" && result.resumable
     ? [
         { value: "switch", label: "Switch to this Pi session" },
@@ -1440,6 +1444,8 @@ async function recallDashboard(pi: ExtensionAPI, ctx: ExtensionCommandContext): 
         { value: ["--source", "pi"], label: "Pi sessions" },
         { value: ["--source", "claude"], label: "Claude sessions" },
         { value: ["--source", "codex"], label: "Codex sessions" },
+        { value: ["--source", "opencode"], label: "OpenCode sessions" },
+        { value: ["--source", "chatgpt"], label: "ChatGPT conversations" },
         { value: ["--entity-type", "organization"], label: "Organizations" },
         { value: ["--entity-type", "person"], label: "People" },
         { value: ["--entity-type", "topic"], label: "Topics" },
@@ -1481,7 +1487,7 @@ export default function recallExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "recall_search",
     label: "Recall Search",
-    description: "Search full local Claude Code, Pi, and Codex session transcripts. Returns at most 20 sessions.",
+    description: "Search full local Claude Code, Pi, Codex, OpenCode, and imported ChatGPT transcripts. Returns at most 20 sessions.",
     promptSnippet: "Search local coding-agent session history",
     promptGuidelines: [
       "Use recall_search when the user asks to find or remember work from an earlier coding-agent session.",
@@ -1489,7 +1495,7 @@ export default function recallExtension(pi: ExtensionAPI) {
     parameters: Type.Object({
       query: Type.String({ description: "Words, regex, or semantic question to search for" }),
       mode: Type.Optional(StringEnum(["fuzzy", "regex", "semantic"] as const)),
-      source: Type.Optional(StringEnum(["claude", "pi", "codex"] as const)),
+      source: Type.Optional(StringEnum(["claude", "pi", "codex", "opencode", "chatgpt"] as const)),
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {

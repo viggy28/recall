@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "recall"
 version = "0.4.0"
-description = "A local knowledge base built from Claude Code, Codex, OpenCode, and Pi conversations"
+description = "A local knowledge base built from Claude Code, Codex, OpenCode, Pi, and ChatGPT conversations"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-keywords = ["recall", "session-search", "coding-agents", "pi", "claude-code", "codex", "opencode"]
+keywords = ["recall", "session-search", "coding-agents", "pi", "claude-code", "codex", "opencode", "chatgpt"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
