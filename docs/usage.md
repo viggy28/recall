@@ -176,10 +176,14 @@ Focus is a synthesis lens, not evidence. Opinionated focuses keep the generated 
 
 Model-backed creation separates two decisions: first approve sending the displayed evidence to the displayed provider/model, then review the generated draft and separately Apply, Revise focus, use the Full editor, or Cancel. `context update` keeps its focused diff review. For model-free update scripts, repeat `--replace OLD NEW`.
 
-In Pi, the `recall_context` tool uses the same Python creation engine and adds Pi-native source selection and review UI. Ask naturally:
+In Pi, the `recall_context` tool uses the same Python creation engine and adds Pi-native source selection and review UI. When you specify session IDs, the agent passes them as `session_ids`; when you say “this session,” it sets `current_session: true` and Recall uses Pi's active session ID. Both skip discovery and go straight to focus selection (if needed) and evidence approval, followed by draft review. Only requests without a specified source search for candidate sessions. These sources use the existing local index; creation does not trigger indexing or substitute other sessions when a requested session is unavailable. Source selection is separate from the optional `instruction` focus text.
+
+Ask naturally:
 
 ```text
 Create a Streambed internals context focused on implementation details.
+Create a reader-restart summary from this session.
+Create a reader-restart summary from session 01a1226f-1742-73aa-b55f-1ab14ac2565b.
 Attach the streambed-internals context.
 Update the streambed-internals context with the rollout notes.
 ```

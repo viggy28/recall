@@ -105,9 +105,24 @@ async function pythonBinary(cwd?: string): Promise<string> {
 }
 
 async function runBackend(pi: ExtensionAPI, args: string[], signal?: AbortSignal, cwd?: string) {
-  const result = await pi.exec(await pythonBinary(cwd), [BACKEND, ...args], { signal, cwd });
+  const python = await pythonBinary(cwd);
+  const result = await pi.exec(python, [BACKEND, ...args], { signal, cwd });
   const stderr = result.stderr.trim();
   if (result.code !== 0 || stderr.includes("semantic mode needs fastembed")) {
+    const creationProtocol = args[0] === "context" && (
+      args[1] === "discover" || args[1] === "source-info" ||
+      (args[1] === "create" && args.includes("--draft-only"))
+    );
+    if (creationProtocol && result.code === 2 && /error: (?:unrecognized arguments|argument \S+: invalid choice)/.test(stderr)) {
+      throw new Error([
+        "Recall's extension and bundled Python backend are incompatible.",
+        `Backend: ${BACKEND}`,
+        `Python: ${python}`,
+        "Reinstall the whole Recall package from the intended version, not just extensions/recall/index.ts, or load a matching local checkout with pi install /path/to/recall. Then run /reload in Pi.",
+        "No context was saved. Do not bypass Recall by writing context files directly.",
+        `Original error: ${stderr}`,
+      ].join("\n"));
+    }
     throw new Error((stderr || result.stdout || `recall exited ${result.code}`).trim());
   }
   return result.stdout;
@@ -1067,13 +1082,19 @@ async function backendContextDraftWithLoader(
   });
 }
 
+type ContextCreationSource = {
+  sourcePath?: string;
+  sessionIds?: string[];
+  currentSession?: boolean;
+};
+
 async function createContextFromCanonicalBackend(
   pi: ExtensionAPI,
   ctx: ExtensionContext,
   name: string,
   initialFocus?: string,
   signal?: AbortSignal,
-  sourcePath?: string,
+  source: ContextCreationSource = {},
 ): Promise<ContextWriteResult> {
   if (!ctx.hasUI) {
     return { status: "failed", error: "Creating a context requires Pi's interactive UI (ctx.hasUI is false)." };
@@ -1089,9 +1110,14 @@ async function createContextFromCanonicalBackend(
   try { await stat(path); throw new Error(`${name} already exists. Ask to update it instead.`); }
   catch (error: any) { if (error?.code !== "ENOENT") throw error; }
 
-  let selectedSourcePath = sourcePath;
-  let sessions: string[] = [];
-  if (!selectedSourcePath) {
+  let selectedSourcePath = source.sourcePath;
+  let sessions = source.sessionIds ?? [];
+  if (source.currentSession) {
+    const sessionId = ctx.sessionManager.getSessionId();
+    if (!sessionId) throw new Error("No active Pi session ID is available. Supply session_ids explicitly.");
+    sessions = [sessionId];
+  }
+  if (!selectedSourcePath && sessions.length === 0) {
     const selected = await selectContextSource(pi, ctx, name, signal);
     if (!selected) return { status: "cancelled" };
     if (selected.blank) {
@@ -1150,7 +1176,7 @@ async function createContextFromCanonicalBackend(
   try {
     while (true) {
       const action = await reviewContextText(pi, ctx, `Create ${name}`, draft, true);
-      if (action === "cancel") return { status: "cancelled" };
+      if (!action || action === "cancel") return { status: "cancelled" };
       if (action === "revise") {
         const revised = await ctx.ui.editor(`Revise the focus for ${name}`, focus.label);
         if (revised?.trim()) {
@@ -1522,29 +1548,43 @@ export default function recallExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "recall_context",
     label: "Recall Context",
-    description: "List, show, attach, create from selected evidence, or update a Recall context. Creation discovers indexed sessions locally and requires reviewed approval.",
+    description: "List, show, attach, create from specified sessions or selected evidence, or update a Recall context. Creation requires evidence approval and draft review; it discovers sessions only when no source is specified.",
     promptSnippet: "Create, manage, and update reusable local context banks",
     promptGuidelines: [
-      "Use recall_context with action create when the user asks to create a context. Pass instruction only when the user supplied a custom focus/theme; otherwise Recall offers opinionated Durable project, Current task, Decision history, and Custom focuses and discovers indexed sessions locally.",
+      "Use recall_context with action create when the user asks to create a context. Pass instruction only when the user supplied a custom focus/theme; otherwise Recall offers opinionated Durable project, Current task, Decision history, and Custom focuses. Discover indexed sessions only when the user has not specified a source.",
+      "For create from a specified session, put the exact user-supplied session ID(s) in session_ids, not instruction. For create from 'this session' or 'our current discussion', set current_session: true. These sources skip session discovery but still require evidence approval and draft review. Never infer a session ID from the topic or context name.",
       "When the user explicitly asks to create a context from source and supplies a repository path, pass that exact path as source_path. For example, `create recall context for safe-notsafe from the source.\\n~/source/github/viggy28/safe-not-safe` uses source_path `~/source/github/viggy28/safe-not-safe`. Never infer a path with regex or substitute the current working directory.",
       "Use recall_context with action update when the user naturally asks to update, revise, correct, or refresh an existing Recall context; pass the user's exact update as instruction.",
     ],
     parameters: Type.Object({
       action: StringEnum(["list", "show", "attach", "create", "update"] as const),
       name: Type.Optional(Type.String({ description: "Context name; required except for list" })),
-      instruction: Type.Optional(Type.String({ description: "For create: optional focus/theme, never evidence. For update: the exact requested change." })),
+      instruction: Type.Optional(Type.String({ description: "For create: optional focus/theme (at most 240 characters), never evidence or source selection. For update: the exact requested change." })),
       source_path: Type.Optional(Type.String({ description: "Exact repository directory supplied by the user for source-aware create only; never infer it or default to cwd" })),
+      session_ids: Type.Optional(Type.Array(Type.String({ minLength: 4 }), { minItems: 1, description: "For create only: exact session IDs or unique prefixes supplied by the user. Skips discovery; cannot combine with source_path or current_session." })),
+      current_session: Type.Optional(Type.Boolean({ description: "For create only: use the active Pi session when the user says 'this session'. Skips discovery; cannot combine with source_path or session_ids." })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (params.source_path !== undefined && params.action !== "create") throw new Error("source_path is supported only for create");
       if (params.source_path !== undefined && !params.source_path.trim()) throw new Error("source_path must not be empty");
+      if (params.session_ids !== undefined && params.action !== "create") throw new Error("session_ids is supported only for create");
+      if (params.current_session !== undefined && params.action !== "create") throw new Error("current_session is supported only for create");
+      if (params.session_ids !== undefined && (params.session_ids.length === 0 || params.session_ids.some((id) => id.trim().length < 4))) {
+        throw new Error("session_ids must contain at least one session ID or unique prefix of at least 4 characters");
+      }
+      const sources = [params.source_path !== undefined, params.session_ids !== undefined, params.current_session === true].filter(Boolean).length;
+      if (sources > 1) throw new Error("Choose only one context source: source_path, session_ids, or current_session");
       if (params.action === "list") {
         const names = await contextNames();
         return { content: [{ type: "text", text: names.length ? names.join("\n") : "No recall contexts." }], details: { names } };
       }
       if (!params.name) throw new Error(`${params.action} requires a context name`);
       if (params.action === "create") {
-        const result = await createContextFromCanonicalBackend(pi, ctx, params.name, params.instruction, signal, params.source_path);
+        const result = await createContextFromCanonicalBackend(pi, ctx, params.name, params.instruction, signal, {
+          sourcePath: params.source_path,
+          sessionIds: params.session_ids?.map((id) => id.trim()),
+          currentSession: params.current_session,
+        });
         const text = result.status === "created"
           ? `Created and verified ${result.path}`
           : result.status === "failed"
