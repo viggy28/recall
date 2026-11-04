@@ -1600,11 +1600,17 @@ export default function recallExtension(pi: ExtensionAPI) {
       limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      // Narrow StringEnum inputs across supported Pi/TypeBox type versions
+      // without casting or changing the provider-compatible JSON schema.
+      const mode = params.mode ?? "fuzzy";
+      if (mode !== "fuzzy" && mode !== "regex" && mode !== "semantic") throw new Error("Invalid Recall search mode");
+      const source = params.source;
+      if (source !== undefined && source !== "claude" && source !== "pi" && source !== "codex" && source !== "opencode" && source !== "chatgpt") throw new Error("Invalid Recall search source");
       const results = await searchBackend(
         pi,
         params.query,
-        params.mode ?? "fuzzy",
-        params.source,
+        mode,
+        source,
         params.limit ?? 10,
         signal,
         ctx.cwd,
