@@ -9,6 +9,7 @@ const requiredFiles = [
   'recall_core/indexing.py',
   'recall_core/retrieval.py',
   'recall_core/context_creation.py',
+  'recall_core/context_policy.py',
   'pyproject.toml',
   'requirements-semantic.txt',
   'extensions/recall/index.ts',

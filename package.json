@@ -27,13 +27,14 @@
     "requirements-semantic.txt",
     "extensions/recall/index.ts",
     "docs/*.md",
+    "docs/examples/*.md",
     "docs/*.svg",
     "docs/recall-demo.gif",
     "docs/recall-demo.tape",
     "README.md"
   ],
   "scripts": {
-    "test:collector": "node --experimental-strip-types --test extensions/recall/source-create.test.ts",
+    "test:collector": "node --experimental-strip-types --test extensions/recall/*.test.ts",
     "typecheck": "tsc --project tsconfig.recall.json"
   },
   "pi": {

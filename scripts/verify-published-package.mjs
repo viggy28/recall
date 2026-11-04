@@ -16,6 +16,8 @@ const required = [
   'package/recall_core/ingestion.py',
   'package/recall_core/indexing.py',
   'package/recall_core/retrieval.py',
+  'package/recall_core/context_creation.py',
+  'package/recall_core/context_policy.py',
   'package/pyproject.toml',
   'package/requirements-semantic.txt',
   'package/extensions/recall/index.ts',

@@ -460,7 +460,17 @@ class IntegrationJsonTests(unittest.TestCase):
         self.assertEqual(result["resume_arg"], "/tmp/pi-session.jsonl")
 
 
+def structured_fixture(name="project", summary="Use Markdown."):
+    return recall.blank_context(name).replace("## Summary\nNot established.", f"## Summary\n{summary}")
+
+
 class ContextBankTests(unittest.TestCase):
+    def _legacy_context(self, name):
+        path = recall._context_path(name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"# {name}\n\n## Current state\n\n## Decisions\n\n## Constraints\n\n## Open questions\n\n## References\n", encoding="utf-8")
+        return path
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.old_contexts_dir = recall.CONTEXTS_DIR
@@ -477,8 +487,9 @@ class ContextBankTests(unittest.TestCase):
         path = recall._context_create("events-db")
 
         self.assertEqual(path, recall.CONTEXTS_DIR / "events-db.md")
-        self.assertIn("# Events Db", path.read_text(encoding="utf-8"))
-        self.assertIn("## Decisions", path.read_text(encoding="utf-8"))
+        self.assertIn("# events-db", path.read_text(encoding="utf-8"))
+        self.assertIn("## Summary", path.read_text(encoding="utf-8"))
+        recall.validate_context(path.read_text(encoding="utf-8"), require_structured=True)
         with self.assertRaisesRegex(recall.ContextError, "already exists"):
             recall._context_create("events-db")
 
@@ -563,7 +574,7 @@ class ContextBankTests(unittest.TestCase):
             ])
 
     def test_context_update_writes_verified_backup_and_undo(self):
-        path = recall._context_create("project")
+        path = self._legacy_context("project")
         original = path.read_text(encoding="utf-8")
         updated = original.replace("## Decisions", "## Decisions\n\n- Done.")
 
@@ -576,7 +587,7 @@ class ContextBankTests(unittest.TestCase):
         self.assertEqual(recall._context_backup_path("project").read_text(encoding="utf-8"), updated)
 
     def test_context_update_detects_concurrent_change(self):
-        path = recall._context_create("project")
+        path = self._legacy_context("project")
         original = path.read_text(encoding="utf-8")
         path.write_text(original + "\nConcurrent change.\n", encoding="utf-8")
 
@@ -613,7 +624,7 @@ class ContextBankTests(unittest.TestCase):
         self.assertNotIn(b"^[", output)
 
     def test_context_update_cli_is_one_operation(self):
-        path = recall._context_create("project")
+        path = self._legacy_context("project")
         original = path.read_text(encoding="utf-8")
         response = __import__("json").dumps({"edits": [{
             "old_text": "## Open questions",
@@ -632,7 +643,7 @@ class ContextBankTests(unittest.TestCase):
         self.assertEqual(recall._context_backup_path("project").read_text(encoding="utf-8"), original)
 
     def test_context_update_cancel_never_writes(self):
-        path = recall._context_create("project")
+        path = self._legacy_context("project")
         original = path.read_text(encoding="utf-8")
         response = '{"edits":[{"old_text":"## Decisions","new_text":"## Decisions\\n\\n- Done."}]}'
         args = SimpleNamespace(name="project", instruction="Done.", instruction_file=None,
@@ -647,7 +658,7 @@ class ContextBankTests(unittest.TestCase):
         self.assertFalse(recall._context_backup_path("project").exists())
 
     def test_context_update_supports_model_free_replacement(self):
-        path = recall._context_create("project")
+        path = self._legacy_context("project")
         args = SimpleNamespace(name="project", instruction=None, instruction_file=None,
                                replace=[["## Decisions", "## Decisions\n\n- Done."]],
                                model=None, dry_run=False, yes=True)
@@ -659,7 +670,7 @@ class ContextBankTests(unittest.TestCase):
         self.assertIn("- Done.", path.read_text(encoding="utf-8"))
 
     def test_context_update_dry_run_never_writes(self):
-        path = recall._context_create("project")
+        path = self._legacy_context("project")
         original = path.read_text(encoding="utf-8")
         response = '{"edits":[{"old_text":"## Decisions","new_text":"## Decisions\\n\\n- Done."}]}'
         out = io.StringIO()
@@ -729,7 +740,9 @@ class ContextBankTests(unittest.TestCase):
         self.assertIn(focus, mapped)
         self.assertIn(focus, final)
         self.assertIn("Treat session evidence as historical", mapped)
-        self.assertIn("at most 15 Markdown lines", final)
+        self.assertIn("## Current understanding", final)
+        self.assertIn("## Evidence", final)
+        self.assertIn("not a\nlimit on the complete document", final)
         self.assertIn("at most 150 words", final)
 
     def test_flexible_context_draft_does_not_require_standard_sections(self):
@@ -777,8 +790,8 @@ class ContextBankTests(unittest.TestCase):
             recall._creation_focus(args)
 
     def test_oversized_initial_draft_is_compressed_once(self):
-        oversized = "# project\n\n" + "\n".join(f"- Detail {i}" for i in range(20))
-        compact = "# project\n\n## Decision\n\n- Use Markdown.\n"
+        oversized = structured_fixture(summary="word " * 151)
+        compact = structured_fixture()
 
         with mock.patch.object(recall, "_run_pi_generation", side_effect=[oversized, compact]) as generate:
             draft = recall._generate_creation_draft(
@@ -799,7 +812,7 @@ class ContextBankTests(unittest.TestCase):
 
     def test_session_create_has_separate_transmission_and_save_review(self):
         conn = self._generation_db()
-        response = "# project\n\n## Architecture\n\n- Portable."
+        response = structured_fixture(summary="Portable.")
         args = SimpleNamespace(name="project", session=["abcd"], source=None, blank=False,
                                focus="Implementation architecture", general=False, model=None,
                                dry_run=False, yes=False, force=False, draft_only=False, json=False)
@@ -812,11 +825,11 @@ class ContextBankTests(unittest.TestCase):
 
     def test_session_create_editor_returns_to_review_without_regenerating(self):
         conn = self._generation_db()
-        response = "# project\n\n## Architecture\n\n- Portable."
+        response = structured_fixture(summary="Portable.")
         args = SimpleNamespace(name="project", session=["abcd"], source=None, blank=False,
                                focus="Implementation architecture", general=False, model=None,
                                dry_run=False, yes=False, force=False, draft_only=False, json=False)
-        edited = "<!-- reviewed -->\n\n# project\n\n## Architecture\n\n- Edited.\n"
+        edited = structured_fixture(summary="Edited.")
         with mock.patch.object(recall, "_run_pi_generation", return_value=response) as generate, \
                 mock.patch.object(recall, "_edit_proposed_context", return_value=edited), \
                 mock.patch.object(recall.sys.stdin, "isatty", return_value=True), \
@@ -860,7 +873,7 @@ class ContextBankTests(unittest.TestCase):
                                source_device=None, source_inode=None, include_snapshot=True)
         out = io.StringIO()
         with mock.patch.object(recall, "collect_source_snapshot", return_value=snapshot), \
-                mock.patch.object(recall, "_run_pi_generation", return_value="# project\n\n## Architecture\n\nSupported.") as generate, \
+                mock.patch.object(recall, "_run_pi_generation", return_value=structured_fixture(summary="Supported.")) as generate, \
                 redirect_stdout(out):
             recall._context_create_evidence(conn, args)
 
@@ -897,7 +910,7 @@ class ContextBankTests(unittest.TestCase):
                                include_snapshot=False)
         out = io.StringIO()
         with mock.patch.object(recall, "collect_source_snapshot") as collect, \
-                mock.patch.object(recall, "_run_pi_generation", return_value="# project\n\n## Architecture\n\nApproved."), \
+                mock.patch.object(recall, "_run_pi_generation", return_value=structured_fixture(summary="Approved.")), \
                 redirect_stdout(out):
             recall._context_create_evidence(conn, args)
 
@@ -953,7 +966,7 @@ class ContextBankTests(unittest.TestCase):
         )
 
         with mock.patch.object(
-                recall, "_run_pi_generation", return_value="# Events DB\n\n## Decisions\n\nUse Markdown."
+                recall, "_run_pi_generation", return_value=structured_fixture("events-db")
         ) as generate:
             path = recall._context_create_evidence(conn, args)
 
@@ -966,19 +979,22 @@ class ContextBankTests(unittest.TestCase):
         generate.assert_called_once()
         self.assertEqual(generate.call_args.args[1], "test/model")
 
-    def test_initial_context_including_provenance_is_at_most_twenty_lines(self):
+    def test_initial_context_keeps_structure_and_evidence_beyond_the_summary_budget(self):
         conn = self._generation_db()
         args = SimpleNamespace(
             name="events-db", session=["abcd"], source=None, focus=None, focus_preset="durable",
             general=False, model=None, dry_run=False, yes=True, force=False, draft_only=False, json=False,
         )
-        body = "# Events DB\n\n## Theme\n\n" + "\n".join(f"- Point {i}" for i in range(10))
+        body = structured_fixture("events-db").replace("## Current understanding\nNot established.", "## Current understanding\n" + "word " * 200)
         with mock.patch.object(recall, "_session_title", return_value="x" * 500), \
                 mock.patch.object(recall, "_run_pi_generation", return_value=body):
             path = recall._context_create_evidence(conn, args)
 
         text = path.read_text(encoding="utf-8")
-        self.assertLessEqual(len(text.strip().splitlines()), 20)
+        report = recall.validate_context(text, require_structured=True)
+        self.assertLessEqual(report["summary_words"], 150)
+        self.assertGreater(report["detail_words"], 150)
+        self.assertIn("### Selected evidence provenance", text)
         self.assertNotIn("x" * 20, text)
 
     def test_chunked_generation_reports_final_synthesis(self):
@@ -995,7 +1011,7 @@ class ContextBankTests(unittest.TestCase):
         stderr = io.StringIO()
 
         with mock.patch.object(
-                recall, "_run_pi_generation", return_value="# Context\n\n## Current state\n\nReady."
+                recall, "_run_pi_generation", return_value=structured_fixture("events-db", "Ready.")
         ) as generate, redirect_stderr(stderr):
             recall._context_create_evidence(conn, args)
 
@@ -1009,11 +1025,12 @@ class ContextBankTests(unittest.TestCase):
             model=None, dry_run=False, yes=True, force=False, draft_only=True, json=True,
         )
         out = io.StringIO()
-        with mock.patch.object(recall, "_run_pi_generation", return_value="# events-db\n\n## Architecture\n\nPortable."), \
+        with mock.patch.object(recall, "_run_pi_generation", return_value=structured_fixture("events-db", "Portable.")), \
                 redirect_stdout(out):
             self.assertIsNone(recall._context_create_evidence(conn, args))
         payload = __import__("json").loads(out.getvalue())
-        self.assertIn("## Architecture", payload["draft"])
+        self.assertIn("## Current understanding", payload["draft"])
+        recall.validate_context(payload["draft"], require_structured=True)
         self.assertFalse(recall._context_path("events-db").exists())
 
     def test_generate_dry_run_does_not_call_model_or_write(self):

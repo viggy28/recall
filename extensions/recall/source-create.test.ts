@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -8,6 +8,15 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import recallExtension from "./index.ts";
+
+function structuredDraft(summary = "Verified findings."): string {
+  return `<!-- recall-context: 1 -->\n# Reader restart\n\nScope: Reader restart investigation.\nStatus: active\n\n## Summary\n${summary}\n\n## Current understanding\nReported findings, not a confirmed fix.\n\n## Open questions and next actions\nWorkload attribution remains unknown.\n\n## Evidence\n[Source](https://example.test/evidence)\n`;
+}
+
+function realBackend(binary: string, args: string[], options: any) {
+  const result = spawnSync(binary, args, { cwd: options.cwd, encoding: "utf8", timeout: 10_000 });
+  return { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? String(result.error ?? "") };
+}
 
 function registeredContextTool(
   onExec?: (options: any) => void,
@@ -19,6 +28,7 @@ function registeredContextTool(
     events: { emit() {} },
     async exec(binary: string, args: string[], options: any) {
       onExec?.(options);
+      if (args[1] === "context" && args[2] === "validate") return realBackend(binary, args, options);
       if (backendExec) return backendExec(binary, args, options);
       const index = args.indexOf("source-info");
       const path = index >= 0 ? args[index + 1] : "";
@@ -206,7 +216,7 @@ test("explicit session sources skip discovery but retain evidence approval and d
         assert.deepEqual(sessions, scenario.expected);
         assert.ok(args.includes("--draft-only"));
         assert.ok(args.includes("--json"));
-        return { code: 0, stdout: JSON.stringify({ draft: "# Reader restart\n\n- Verified findings.\n" }), stderr: "" };
+        return { code: 0, stdout: JSON.stringify({ draft: structuredDraft() }), stderr: "" };
       });
       let screens = 0;
       let approvals = 0;
@@ -301,14 +311,15 @@ test("context generation shows cancellable progress after approval", async (t) =
     events: {
       emit(name: string, data: any) { attentionEvents.push({ name, data }); },
     },
-    async exec(_binary: string, args: string[], options: any) {
+    async exec(binary: string, args: string[], options: any) {
+      if (args[1] === "context" && args[2] === "validate") return realBackend(binary, args, options);
       if (args.includes("source-info")) {
         return { code: 0, stdout: JSON.stringify({ path: source, disclosure: `Path: ${source}` }), stderr: "" };
       }
       if (args.includes("create")) {
         generationSignal = options.signal;
         await generationGate;
-        return { code: 0, stdout: JSON.stringify({ draft: "# Progress test\n" }), stderr: "" };
+        return { code: 0, stdout: JSON.stringify({ draft: structuredDraft("Progress test.") }), stderr: "" };
       }
       throw new Error(`unexpected backend call: ${args.join(" ")}`);
     },
