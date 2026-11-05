@@ -92,7 +92,7 @@ open graph.html
 
 ## Context banks
 
-Context banks turn useful material from past conversations into reusable Markdown documents. Create, review, update, and attach them to future Pi sessions without moving your project context to a hosted service.
+Context banks turn useful material from past conversations into reusable Markdown documents. New contexts have a short human-readable summary, current understanding, open questions, optional details, and evidence in one document. Updates maintain the summary and detail together through reviewed changes. Existing contexts are not automatically migrated. Create, review, update, and attach them to future Pi sessions without moving your project context to a hosted service.
 
 ```bash
 # Discover matching indexed sessions locally, select evidence, then choose a focus.

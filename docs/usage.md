@@ -142,6 +142,47 @@ export RECALL_PYTHON=/absolute/path/to/venv/bin/python
 
 Context banks are plain Markdown files created from selected evidence and an explicit focus. Recall never treats a context name or short description as project evidence.
 
+### Structured contexts
+
+New contexts use one versioned document for both human reading and agent context:
+
+```markdown
+<!-- recall-context: 1 -->
+# Context title
+
+Scope: What this context covers.
+Status: unknown
+
+## Summary
+The main conclusion, current state, and important uncertainty.
+
+## Current understanding
+Findings and decisions, distinguishing observation, reported claims, and hypotheses.
+
+## Open questions and next actions
+Unresolved questions and agreed next actions, or Not established.
+
+## Details
+Optional supporting explanation. Use subheadings for implementation, timeline, or constraints.
+
+## Evidence
+Direct links and source references; explicitly identify missing evidence.
+```
+
+Scope and Status are required single lines. Status can be `active`, `paused`, `resolved`, `reference`, or `unknown`; generation uses `unknown` unless the evidence establishes otherwise. All sections except Details are required and nonempty. Summary has a 150-word limit; supporting material, including metadata, has a separate 4,000-word limit. The full document retains the existing 100,000-character safety limit. There is no whole-document 150-word or 20-line limit. Oversized or malformed model drafts get up to two repair attempts; invalid documents are never silently truncated or saved.
+
+Creation records the selected session/file provenance and available direct file links. Generation time, Updated time, and historical evidence coverage are separate: editing a document is not reverifying its claims. Links are not fetched automatically. Structural validation cannot prove that a source supports a claim; review the evidence and qualifications before applying.
+
+Updates maintain Summary and the supporting sections in one reviewed revision. The update prompt replaces superseded current state and completed next actions rather than appending session summaries. Review shows section word counts and warnings when scope changes or supporting material changes without a changed summary. In Pi's update review, press **V** to switch between the diff and the full proposed document. Full-editor changes are validated again before saving. Existing optimistic concurrent-change checks and the previous-revision backup apply.
+
+Existing contexts without the leading schema marker remain legacy documents. Reading, showing, attaching, and exporting them does not rewrite them. Explicit legacy updates keep their existing format; Recall rejects adding the schema marker in place, including with `create --force`. There is no migration command in this release. Future migration will create separate reviewed candidates, keeping the originals intact.
+
+Attachment still sends the complete document, including its evidence, to the agent. Section-only retrieval and summary-only attachment are not part of this release.
+
+See the [synthetic investigation example](examples/structured-context.md) for a complete document produced by generation and then updated with new synthetic evidence. Its URLs and incident details are fictional.
+
+### Commands
+
 ```bash
 # Interactive: search the existing local index, select one or more sessions,
 # then choose Durable project, Current task, Decision history, or Custom focus.
@@ -172,14 +213,18 @@ recall context delete streambed-internals --force
 
 With no source flag in a terminal, `context create` searches already-indexed session titles and messages locally. It shows five ranked matches at a time and supports show-more, refined search, and comma-separated multi-selection. Creation never triggers indexing. In non-interactive use, select `--session`, `--source`, or `--blank` explicitly.
 
-Focus is a synthesis lens, not evidence. Opinionated focuses keep the generated body to at most 15 Markdown lines and 150 words, and the complete initial context to at most 20 lines including compact provenance, while selecting the most important themes or decisions instead of producing exhaustive implementation documentation. **Durable project** (recommended) preserves the difference between shipped behavior and historical proposals; **Current task** creates a dated handoff; **Decision history** preserves adopted, proposed, rejected, and superseded status. A custom focus adds a topic-specific lens with conservative evidence handling. The focus policy is applied during every chunk summary and the final synthesis.
+Focus is a synthesis lens, not evidence. Every focus uses the same structured document and separate summary/supporting-material budgets, selecting important themes and decisions instead of producing exhaustive session transcripts. **Durable project** (recommended) preserves the difference between shipped behavior and historical proposals; **Current task** creates a dated handoff; **Decision history** preserves adopted, proposed, rejected, and superseded status. A custom focus adds a topic-specific lens with conservative evidence handling. The focus policy is applied during every chunk summary and the final synthesis.
 
 Model-backed creation separates two decisions: first approve sending the displayed evidence to the displayed provider/model, then review the generated draft and separately Apply, Revise focus, use the Full editor, or Cancel. `context update` keeps its focused diff review. For model-free update scripts, repeat `--replace OLD NEW`.
 
-In Pi, the `recall_context` tool uses the same Python creation engine and adds Pi-native source selection and review UI. Ask naturally:
+In Pi, the `recall_context` tool uses the same Python creation engine and adds Pi-native source selection and review UI. When you specify session IDs, the agent passes them as `session_ids`; when you say “this session,” it sets `current_session: true` and Recall uses Pi's active session ID. Both skip discovery and go straight to focus selection (if needed) and evidence approval, followed by draft review. Only requests without a specified source search for candidate sessions. These sources use the existing local index; creation does not trigger indexing or substitute other sessions when a requested session is unavailable. Source selection is separate from the optional `instruction` focus text.
+
+Ask naturally:
 
 ```text
 Create a Streambed internals context focused on implementation details.
+Create a reader-restart summary from this session.
+Create a reader-restart summary from session 01a1226f-1742-73aa-b55f-1ab14ac2565b.
 Attach the streambed-internals context.
 Update the streambed-internals context with the rollout notes.
 ```

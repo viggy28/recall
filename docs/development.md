@@ -16,6 +16,18 @@ Include optional semantic-search dependencies when needed:
 pip install -e ".[semantic]"
 ```
 
+## Testing the Pi extension from a checkout
+
+Load the complete checkout so the TypeScript extension and Python backend stay together:
+
+```bash
+pi install /absolute/path/to/recall
+```
+
+If `npm:recall-pi` is already configured, remove that package entry with `pi remove npm:recall-pi` to avoid loading both copies. Run `/reload` in existing Pi sessions after changing the package source.
+
+Do not copy only `extensions/recall/index.ts` into an installed npm package. Recall runs the `recall.py` bundled beside its extension, not the `recall` executable on PATH. Mixing a newer extension with an older backend can fail at `context discover` before any approval screen opens, even when the standalone CLI works.
+
 ## Tests
 
 Run the Python test suite:
@@ -67,7 +79,10 @@ The `recall.py` module and CLI remain the compatibility facade. The data lifecyc
 - `recall_core.ingestion` discovers Claude Code, Pi, Codex, OpenCode, and ChatGPT transcripts and normalizes their records into a shared message shape.
 - `recall_core.indexing` owns the SQLite schema, FTS5 indexes, connections, and incremental persistence.
 - `recall_core.retrieval` owns query filters, fuzzy and regular-expression search, ranking, and match-preview formatting.
-- `recall_core.context_creation` is the canonical source-first creation engine: local session discovery/ranking, focus-aware prompts, flexible draft validation, and bounded repository evidence collection. The CLI calls it directly; the Pi extension uses the backend's JSON discovery/draft protocol and only adapts source selection, approvals, and review rendering.
+- `recall_core.context_creation` is the canonical source-first creation engine: local session discovery/ranking, focus-aware structured generation, and bounded repository evidence collection.
+- `recall_core.context_policy` owns the versioned Markdown contract, section budgets, writing/update policy, and validation. New generation, CLI updates/edits/imports, and Pi saves use this policy. The Pi extension calls `context validate --input-file` with a private temporary JSON proposal; validation does not index, invoke a model, fetch links, or write contexts. Legacy documents are not converted in place.
+
+The Pi extension uses the backend's JSON discovery/draft/validation protocols and adapts source selection, approvals, and review rendering. Tests exercise the shared validator through real Python subprocesses, including Pi creation/editor/update saves and legacy preservation.
 
 Semantic embedding and CLI/TUI orchestration currently remain in the facade. Keeping them there avoids changing optional-dependency loading and the public module surface while the core is separated into subsystems.
 
