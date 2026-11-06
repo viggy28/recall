@@ -8,7 +8,7 @@ from unittest import mock
 
 import recall
 from recall_core.context_policy import (
-    SCHEMA_MARKER, blank_context, prepare_update, schema_version,
+    V1_MARKER as SCHEMA_MARKER, blank_context, prepare_update, schema_version,
     structure_instruction, validate_context,
 )
 
@@ -89,11 +89,11 @@ class ContextPolicyTests(unittest.TestCase):
         self.assertTrue(any("Summary did not" in warning for warning in report["warnings"]))
 
     def test_unknown_schema_and_marker_removal_are_rejected(self):
-        for text in (DOCUMENT.replace("recall-context: 1", "recall-context: 2"), DOCUMENT.replace(SCHEMA_MARKER, "")):
+        for text in (DOCUMENT.replace("recall-context: 1", "recall-context: 3"), DOCUMENT.replace(SCHEMA_MARKER, "")):
             with self.assertRaises(ValueError):
                 validate_context(text, original=DOCUMENT)
         with self.assertRaisesRegex(ValueError, "unsupported"):
-            validate_context(DOCUMENT.replace("recall-context: 1", "recall-context: 2"))
+            validate_context(DOCUMENT.replace("recall-context: 1", "recall-context: 3"))
 
     def test_legacy_is_preserved_and_not_upgraded_in_place(self):
         legacy = "# Old notes\n\nUnstructured material, including uncertain history.\n"
@@ -149,7 +149,7 @@ class ContextPolicyTests(unittest.TestCase):
         example = Path(__file__).resolve().parents[1] / "docs/examples/structured-context.md"
         report = validate_context(example.read_text(encoding="utf-8"), require_structured=True)
         self.assertEqual(report["warnings"], [])
-        self.assertIn("not a real incident", report["text"].lower())
+        self.assertIn("fictional example", report["text"].lower())
 
     def test_blank_creation_is_structured_without_inventing_facts(self):
         report = validate_context(blank_context("new-context"), require_structured=True)
@@ -210,7 +210,7 @@ class ContextPolicyWriteTests(unittest.TestCase):
         concurrent = "# Legacy copy introduced during review\n"
         path.write_text(concurrent)
         with self.assertRaisesRegex(recall.ContextError, "changed while"):
-            recall._save_created_context(path, DOCUMENT, original, force=True)
+            recall._save_created_context(path, blank_context("reader"), original, force=True)
         self.assertEqual(path.read_text(), concurrent)
 
     def test_json_validation_protocol_never_indexes_or_saves(self):

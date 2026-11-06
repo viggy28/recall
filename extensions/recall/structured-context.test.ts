@@ -29,10 +29,38 @@ Read-only savepoints do not imply ID-producing writes.
 [Evidence](https://example.test/support)
 `;
 
-function toolWithBackend(generated = fixture) {
+const readableFixture = `<!-- recall-context: 2 -->
+# Test investigation
+
+## Summary
+The cause is unknown.
+
+## Open questions and next actions
+Ask for workload attribution.
+
+---
+
+Supporting detail follows.
+
+## Current understanding
+Reported evidence does not establish a fix. [E1]
+
+## Details
+Read-only savepoints do not imply ID-producing writes.
+
+## Evidence
+- **E1** — [Evidence](https://example.test/support)
+
+### Context metadata
+- Scope: Synthetic investigation.
+- Status: active
+`;
+
+function toolWithBackend(generated = readableFixture, editorialReceipt = true) {
   let tool: any;
   const events: string[] = [];
   recallExtension({
+    on() {},
     registerCommand() {},
     registerTool(candidate: any) { if (candidate.name === "recall_context") tool = candidate; },
     events: { emit(name: string) { events.push(name); } },
@@ -42,7 +70,7 @@ function toolWithBackend(generated = fixture) {
         return { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
       }
       assert.equal(args[2], "create");
-      return { code: 0, stdout: JSON.stringify({ draft: generated }), stderr: "" };
+      return { code: 0, stdout: JSON.stringify({ draft: generated, ...(editorialReceipt ? { editorial_notes: [] } : {}) }), stderr: "" };
     },
   } as any);
   return { tool, events };
@@ -71,7 +99,7 @@ test("Pi creation validates the document after full-editor changes and saves onl
   let screen = 0;
   let loader: any;
   t.after(() => loader?.dispose?.());
-  const edited = fixture.replace("The cause is unknown.", "AWS reported a problem; attribution remains unknown.");
+  const edited = readableFixture.replace("The cause is unknown.", "AWS reported a problem; attribution remains unknown.");
   const result = await tool.execute("call", { action: "create", name, session_ids: ["fixture-session"], instruction: "Synthetic investigation" }, undefined, undefined, {
     hasUI: true, mode: "tui", cwd: tmpdir(), model: { provider: "test", id: "model" },
     ui: {
@@ -107,13 +135,33 @@ test("an unstructured generated draft is rejected before review or save", async 
   await assert.rejects(readFile(path), { code: "ENOENT" });
 });
 
-for (const scenario of ["valid", "invalid", "legacy", "concurrent"] as const) {
+test("creation refuses an older backend that has not performed editorial review", async (t) => {
+  initTheme(undefined, false);
+  const { name, path } = await testPaths(t, "missing-editorial");
+  const { tool } = toolWithBackend(readableFixture, false);
+  let loader: any;
+  t.after(() => loader?.dispose?.());
+  const result = await tool.execute("call", { action: "create", name, session_ids: ["fixture-session"], instruction: "Synthetic investigation" }, undefined, undefined, {
+    hasUI: true, mode: "tui", cwd: tmpdir(),
+    ui: {
+      async confirm() { return true; },
+      async custom(factory: any) { return new Promise((resolve) => { loader = factory({ requestRender() {} }, theme, {}, resolve); }); },
+      notify() {},
+    },
+  });
+  assert.equal(result.details.status, "failed");
+  assert.match(result.details.error, /completed Summary editorial review/);
+  await assert.rejects(readFile(path), { code: "ENOENT" });
+});
+
+for (const scenario of ["valid", "v2", "invalid", "legacy", "concurrent"] as const) {
   test(`Pi update: ${scenario} proposal uses the shared save policy`, async (t) => {
     initTheme(undefined, false);
     const { name, path, backup } = await testPaths(t, scenario);
-    const original = scenario === "legacy" ? "# Legacy\n\nRetain original formatting.\n" : fixture;
+    const base = scenario === "v2" ? readableFixture : fixture;
+    const original = scenario === "legacy" ? "# Legacy\n\nRetain original formatting.\n" : base;
     await writeFile(path, original);
-    const updated = scenario === "invalid" ? fixture.replace("## Summary", "## Missing") : fixture.replace("The cause is unknown.", "The cause remains under investigation.").replace("Ask for workload attribution.", "Await workload attribution from AWS.");
+    const updated = scenario === "invalid" ? base.replace("## Summary", "## Missing") : base.replace("The cause is unknown.", "The cause remains under investigation.").replace("Ask for workload attribution.", "Await workload attribution from AWS.");
     const { tool } = toolWithBackend();
     let screen = 0;
     const execute = tool.execute("call", { action: "update", name, instruction: "Update the investigation." }, undefined, undefined, {
@@ -135,7 +183,7 @@ for (const scenario of ["valid", "invalid", "legacy", "concurrent"] as const) {
         notify() {},
       },
     });
-    if (scenario === "valid") {
+    if (scenario === "valid" || scenario === "v2") {
       const result = await execute;
       assert.equal(result.details.status, "updated");
       assert.equal(await readFile(path, "utf8"), updated);

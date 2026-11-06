@@ -10,6 +10,7 @@ const requiredFiles = [
   'recall_core/retrieval.py',
   'recall_core/context_creation.py',
   'recall_core/context_policy.py',
+  'recall_core/context_editorial.py',
   'pyproject.toml',
   'requirements-semantic.txt',
   'extensions/recall/index.ts',

@@ -147,39 +147,52 @@ Context banks are plain Markdown files created from selected evidence and an exp
 New contexts use one versioned document for both human reading and agent context:
 
 ```markdown
-<!-- recall-context: 1 -->
-# Context title
-
-Scope: What this context covers.
-Status: unknown
+<!-- recall-context: 2 -->
+# Human-readable title
 
 ## Summary
-The main conclusion, current state, and important uncertainty.
-
-## Current understanding
-Findings and decisions, distinguishing observation, reported claims, and hypotheses.
+The main conclusion and essential uncertainty, usually two to four sentences.
 
 ## Open questions and next actions
-Unresolved questions and agreed next actions, or Not established.
+Direct actions or questions. Preserve whether an action was proposed or agreed.
+
+---
+
+Supporting detail follows.
+
+## Current understanding
+Add evidence, reasoning, and qualifications rather than repeating Summary. Cite [E1].
 
 ## Details
-Optional supporting explanation. Use subheadings for implementation, timeline, or constraints.
+Optional supporting explanation, precise timelines, or implementation detail.
 
 ## Evidence
-Direct links and source references; explicitly identify missing evidence.
+- **E1** — [Descriptive source label](https://example.test/source), or an explicit missing-reference note.
+
+### Context metadata
+- Scope: What this context covers.
+- Status: unknown
 ```
 
-Scope and Status are required single lines. Status can be `active`, `paused`, `resolved`, `reference`, or `unknown`; generation uses `unknown` unless the evidence establishes otherwise. All sections except Details are required and nonempty. Summary has a 150-word limit; supporting material, including metadata, has a separate 4,000-word limit. The full document retains the existing 100,000-character safety limit. There is no whole-document 150-word or 20-line limit. Oversized or malformed model drafts get up to two repair attempts; invalid documents are never silently truncated or saved.
+For a quick read, stop after Summary and next actions; everything below the divider is supporting reference material. Citations such as `[E1]` stay compact in Glow; URL targets appear only under Evidence. These are plain-text IDs, not Markdown link-reference definitions that expand when rendered. Generation time, focus, session IDs, Scope, and Status belong in the final metadata subsection, not the opening.
+
+Scope and Status are required metadata bullets. Status can be `active`, `paused`, `resolved`, `reference`, or `unknown`; generation uses `unknown` unless the evidence establishes otherwise. All sections except Details are required and nonempty. Summary has a 150-word limit; supporting material, including metadata, has a separate 4,000-word limit. The full document retains the existing 100,000-character safety limit. There is no whole-document 150-word or 20-line limit. Oversized or malformed model drafts get up to two repair attempts; invalid documents are never silently truncated or saved.
 
 Creation records the selected session/file provenance and available direct file links. Generation time, Updated time, and historical evidence coverage are separate: editing a document is not reverifying its claims. Links are not fetched automatically. Structural validation cannot prove that a source supports a claim; review the evidence and qualifications before applying.
 
 Updates maintain Summary and the supporting sections in one reviewed revision. The update prompt replaces superseded current state and completed next actions rather than appending session summaries. Review shows section word counts and warnings when scope changes or supporting material changes without a changed summary. In Pi's update review, press **V** to switch between the diff and the full proposed document. Full-editor changes are validated again before saving. Existing optimistic concurrent-change checks and the previous-revision backup apply.
 
-Existing contexts without the leading schema marker remain legacy documents. Reading, showing, attaching, and exporting them does not rewrite them. Explicit legacy updates keep their existing format; Recall rejects adding the schema marker in place, including with `create --force`. There is no migration command in this release. Future migration will create separate reviewed candidates, keeping the originals intact.
+Pi updates include recent visible conversation evidence, so “update with what you found here” can refer to findings already discussed. The selection uses the active, compaction-aware session projection and respects context edits, rather than rereading raw history or other branches. It includes up to 16 complete user/assistant messages or session summaries within a 24,000-character serialized budget; oversized or older messages are omitted, not cut mid-qualification. Tool arguments/results, thinking, images, system prompts, and custom attachments are excluded. Session provenance and selection counts are supplied to the updater, the same evidence reaches the Summary editor, and omission counts appear before approval. For example, a prior message saying “both 30s and 15s reproduced errors” reaches the updater even if the instruction only says “record what we found.” If the needed findings were omitted, supply concrete facts and source links; an empty proposal is not proof the context is up to date. The standalone CLI has no implicit Pi conversation and still needs a self-contained instruction.
+
+Model-generated structured drafts get one additional, tool-free Summary editorial pass after structural repairs; natural-language updates to v1/v2 contexts use it too. It applies [shared writing rules](../recall_core/context_editorial.py), adapted from Zinsser’s [simplicity, clutter, and revision principles](https://bpb-us-e1.wpmucdn.com/sites.gatech.edu/dist/c/359/files/2014/08/Zinsser.pdf?bid=359). Creation uses the approved evidence (chunk summaries for long transcripts); updates use the original context and requested change. The editor can change only Summary. For example, retain “recovered in 14–18 seconds” instead of replacing it with “recovered quickly.” Invalid output, model errors, or unresolved evidence conflicts stop the operation without saving. Editorial notes appear before approval; they are not independent factual verification. Manual editor changes and deterministic replacements are validated and reviewed without another model call. Legacy contexts are not implicitly converted to add a Summary.
+
+Pi blocks direct `write` and `edit` calls into its managed context and history directories, including symlink aliases and missing destinations. Use Recall’s reviewed operations instead. Reload Pi after updating the extension to activate this guard. This prevents accidental bypass, not arbitrary filesystem access: shell commands, other agents/extensions, hardlinks, and filesystem races are not contained. Recall’s own reviewed saves remain available; changing file permissions under the same operating-system user would not create a security boundary.
+
+Existing v1 contexts keep their original section order, prelude metadata, and link style when updated. Unmarked documents remain legacy documents. Reading, showing, attaching, and exporting either format never rewrites it. Recall rejects changing the format version or adding a marker in place, including through forced creation. Use a new name for a reviewed v2 candidate; there is no migration command.
 
 Attachment still sends the complete document, including its evidence, to the agent. Section-only retrieval and summary-only attachment are not part of this release.
 
-See the [synthetic investigation example](examples/structured-context.md) for a complete document produced by generation and then updated with new synthetic evidence. Its URLs and incident details are fictional.
+See the [synthetic investigation example](examples/structured-context.md) for a complete illustrative document. Its URLs and incident details are fictional.
 
 ### Commands
 

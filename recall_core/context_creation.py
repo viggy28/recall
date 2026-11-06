@@ -219,7 +219,7 @@ necessary evidence to make the document shorter.
 def initial_draft_size_error(text: str) -> str | None:
     """Compatibility facade: new drafts must satisfy the shared structure and budgets."""
     try:
-        validate_context(text, require_structured=True)
+        validate_context(text, require_structured=True, require_current=True)
     except ValueError as error:
         return str(error)
     return None

@@ -10,7 +10,7 @@ import { initTheme } from "@earendil-works/pi-coding-agent";
 import recallExtension from "./index.ts";
 
 function structuredDraft(summary = "Verified findings."): string {
-  return `<!-- recall-context: 1 -->\n# Reader restart\n\nScope: Reader restart investigation.\nStatus: active\n\n## Summary\n${summary}\n\n## Current understanding\nReported findings, not a confirmed fix.\n\n## Open questions and next actions\nWorkload attribution remains unknown.\n\n## Evidence\n[Source](https://example.test/evidence)\n`;
+  return `<!-- recall-context: 2 -->\n# Reader restart\n\n## Summary\n${summary}\n\n## Open questions and next actions\nAsk for workload attribution.\n\n---\n\nSupporting detail follows.\n\n## Current understanding\nReported findings, not a confirmed fix. [E1]\n\n## Evidence\n- **E1** — [Source](https://example.test/evidence)\n\n### Context metadata\n- Scope: Reader restart investigation.\n- Status: active\n`;
 }
 
 function realBackend(binary: string, args: string[], options: any) {
@@ -24,6 +24,7 @@ function registeredContextTool(
 ): any {
   let contextTool: any;
   const pi = {
+    on() {},
     registerCommand() {},
     events: { emit() {} },
     async exec(binary: string, args: string[], options: any) {
@@ -216,7 +217,7 @@ test("explicit session sources skip discovery but retain evidence approval and d
         assert.deepEqual(sessions, scenario.expected);
         assert.ok(args.includes("--draft-only"));
         assert.ok(args.includes("--json"));
-        return { code: 0, stdout: JSON.stringify({ draft: structuredDraft() }), stderr: "" };
+        return { code: 0, stdout: JSON.stringify({ draft: structuredDraft(), editorial_notes: [] }), stderr: "" };
       });
       let screens = 0;
       let approvals = 0;
@@ -307,6 +308,7 @@ test("context generation shows cancellable progress after approval", async (t) =
   const source = tmpdir();
   const generationGate = new Promise<void>((resolve) => { releaseGeneration = resolve; });
   const pi = {
+    on() {},
     registerCommand() {},
     events: {
       emit(name: string, data: any) { attentionEvents.push({ name, data }); },
@@ -319,7 +321,7 @@ test("context generation shows cancellable progress after approval", async (t) =
       if (args.includes("create")) {
         generationSignal = options.signal;
         await generationGate;
-        return { code: 0, stdout: JSON.stringify({ draft: structuredDraft("Progress test.") }), stderr: "" };
+        return { code: 0, stdout: JSON.stringify({ draft: structuredDraft("Progress test."), editorial_notes: [] }), stderr: "" };
       }
       throw new Error(`unexpected backend call: ${args.join(" ")}`);
     },
