@@ -18,6 +18,7 @@ const required = [
   'package/recall_core/retrieval.py',
   'package/recall_core/context_creation.py',
   'package/recall_core/context_policy.py',
+  'package/recall_core/context_editorial.py',
   'package/pyproject.toml',
   'package/requirements-semantic.txt',
   'package/extensions/recall/index.ts',

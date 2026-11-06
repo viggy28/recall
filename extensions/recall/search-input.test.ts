@@ -7,6 +7,7 @@ test("search enum inputs are narrowed without changing valid CLI arguments", asy
   let tool: any;
   const calls: string[][] = [];
   recallExtension({
+    on() {},
     registerCommand() {},
     registerTool(candidate: any) { if (candidate.name === "recall_search") tool = candidate; },
     async exec(_binary: string, args: string[]) {

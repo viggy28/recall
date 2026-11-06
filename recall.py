@@ -94,8 +94,9 @@ from recall_core.ingestion import (
 
 
 from recall_core.context_policy import (
-    SCHEMA_MARKER, blank_context, prepare_update, schema_version, validate_context,
+    SCHEMA_MARKER, SCHEMA_VERSION, add_creation_provenance, blank_context, prepare_update, schema_version, validate_context,
 )
+from recall_core.context_editorial import apply_editorial_response, editorial_prompt
 
 
 # --------------------------------------------------------------------------- #
@@ -918,11 +919,12 @@ def _context_template(name: str) -> str:
 
 
 def _context_validation(text: str, *, original: str | None = None,
-                        require_structured: bool = False, prepare: bool = False) -> dict:
+                        require_structured: bool = False, prepare: bool = False,
+                        require_current: bool = False) -> dict:
     try:
         if prepare and original is not None:
             return prepare_update(original, text)
-        return validate_context(text, original=original, require_structured=require_structured)
+        return validate_context(text, original=original, require_structured=require_structured, require_current=require_current)
     except ValueError as error:
         raise ContextError(str(error)) from None
 
@@ -932,7 +934,7 @@ def _context_create(name: str, force: bool = False) -> Path:
     path = _context_path(name)
     text = _context_template(name)
     original = path.read_text(encoding="utf-8") if path.exists() else None
-    _context_validation(text, original=original, require_structured=True)
+    _context_validation(text, original=original, require_structured=True, require_current=True)
     _ensure_contexts_dir()
     _write_text_file(path, text, force=force)
     return path
@@ -1221,6 +1223,10 @@ def _context_update(args) -> Path | None:
             response = _run_pi_generation(_context_update_prompt(args.name, original, instruction), args.model)
             edits = _parse_context_patch(response)
         updated = _apply_context_patch(original, edits)
+        if not args.replace and schema_version(updated) is not None:
+            reviewed = _review_context_summary(updated, original, instruction, args.model)
+            updated = _context_validation(reviewed["text"], original=original, prepare=True)["text"]
+            _print_editorial_notes(reviewed["editorial_notes"])
         report = _context_validation(updated, original=original)
         _print_context_review_report(report)
         diff = _context_diff(args.name, original, updated)
@@ -1545,6 +1551,14 @@ def _creation_focus(args) -> tuple[str, str]:
         print("Choose durable, current task, decision history, or custom.")
 
 
+def _creation_session_reference(conn, session: dict) -> str:
+    row = conn.execute("SELECT path FROM files WHERE session_id=? AND source=? ORDER BY present DESC,mtime DESC LIMIT 1",
+                       (session["session_id"], session["source"])).fetchone()
+    label = f"Source session {session['session_id']} ({session['source']})".replace("\n", "\\n").replace("[", "\\[").replace("]", "\\]")
+    return (f"[{label}]({Path(row['path']).absolute().as_uri()})" if row
+            else f"{label}; transcript link unavailable, retained in the Recall index.")
+
+
 def _session_creation_evidence(conn, prefixes: list[str]) -> tuple[list[dict], list[str], int]:
     args = argparse.Namespace(session=prefixes, result=None)
     sessions = _generation_sessions(conn, args)
@@ -1555,14 +1569,30 @@ def _session_creation_evidence(conn, prefixes: list[str]) -> tuple[list[dict], l
         compacted += int(used_compaction)
         sections.append(
             f"# Source session: {title}\nSession ID: {session['session_id']}\n"
-            f"Harness: {_src_label(session['source'])}\nLast activity: {_iso_utc(session['last_epoch'])}\n\n{transcript}"
+            f"Harness: {_src_label(session['source'])}\nLast activity: {_iso_utc(session['last_epoch'])}\n"
+            f"Original session reference: {_creation_session_reference(conn, session)}\n\n{transcript}"
         )
     return sessions, sections, compacted
 
 
+def _print_editorial_notes(notes: list[str]) -> None:
+    print("Summary editorial pass completed (model-assisted, not independent verification).")
+    for note in notes:
+        print(f"  - {note}")
+
+
+def _review_context_summary(text: str, evidence: str, instruction: str, model: str | None) -> dict:
+    try:
+        response = _run_pi_generation(editorial_prompt(text, evidence, instruction), model)
+        return apply_editorial_response(text, response)
+    except ValueError as error:
+        raise ContextError(str(error)) from None
+
+
 def _generate_creation_draft(
         name: str, focus: str, focus_preset: str, chunks: list[str], model: str | None,
-        prepared_prompt: bool = False) -> str:
+        prepared_prompt: bool = False) -> tuple[str, list[str]]:
+    evidence = chunks
     if prepared_prompt:
         result = _run_pi_generation(chunks[0], model)
     elif len(chunks) == 1:
@@ -1575,6 +1605,7 @@ def _generate_creation_draft(
                 _map_generation_prompt(chunk, i, len(chunks), focus, focus_preset), model,
             ))
         print(f"combining {len(summaries)} summaries...", file=sys.stderr)
+        evidence = summaries
         result = _run_pi_generation(_final_generation_prompt(summaries, name, focus, focus_preset), model)
     draft = _validate_context_draft(name, result)
     for _ in range(2):
@@ -1587,16 +1618,18 @@ def _generate_creation_draft(
     error = initial_draft_size_error(draft)
     if error:
         raise ContextError(error)
-    return draft
+    print("reviewing Summary for clarity and evidence coverage...", file=sys.stderr)
+    review = _review_context_summary(draft, "\n\n".join(evidence), focus, model)
+    return review["text"], review["editorial_notes"]
 
 
 def _save_created_context(destination: Path, markdown: str, original: str | None, force: bool) -> Path:
-    _context_validation(markdown, require_structured=True)
+    _context_validation(markdown, require_structured=True, require_current=True)
     current = destination.read_text(encoding="utf-8") if destination.exists() else None
     if current != original:
         raise ContextError("context changed while the draft was reviewed; no changes were written")
-    if current is not None and schema_version(current) is None:
-        raise ContextError("legacy contexts are not upgraded in place; choose a new context name")
+    if current is not None and schema_version(current) != SCHEMA_VERSION:
+        raise ContextError("existing contexts are not upgraded in place; choose a new context name")
     _ensure_contexts_dir()
     _write_text_file(destination, markdown, force=force)
     return destination
@@ -1608,8 +1641,8 @@ def _context_create_evidence(conn, args) -> Path | None:
     if original_destination is not None:
         if not args.force:
             raise ContextError(f"context '{args.name}' already exists; use context update instead")
-        if schema_version(original_destination) is None:
-            raise ContextError("legacy contexts are not upgraded in place; choose a new context name")
+        if schema_version(original_destination) != SCHEMA_VERSION:
+            raise ContextError("existing contexts are not upgraded in place; choose a new context name")
 
     prefixes = list(args.session or [])
     source_value = args.source
@@ -1704,46 +1737,43 @@ def _context_create_evidence(conn, args) -> Path | None:
             return None
 
     while True:
-        draft = _generate_creation_draft(
+        draft, editorial_notes = _generate_creation_draft(
             args.name, focus, focus_preset, chunks, args.model,
             prepared_prompt=source_snapshot is not None,
         )
         generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        provenance = f"> Generated: `{generated_at}` · Focus: {focus} (`{focus_preset}`)"
+        provenance = {"Generated": f"`{generated_at}`", "Updated": f"`{generated_at}`",
+                      "Focus": f"{focus} (`{focus_preset}`)"}
         if sessions:
             coverage = _iso_utc(max((s["last_epoch"] for s in sessions if s["last_epoch"] is not None), default=None))
-            source_ids = ", ".join(f"`{s['session_id']}`" for s in sessions)
-            evidence = f"> Historical evidence through `{coverage}`: {source_ids}"
+            provenance["Evidence through"] = f"`{coverage}`"
+            provenance["Source sessions"] = ", ".join(f"`{s['session_id']}`" for s in sessions)
         else:
-            evidence = (f"> Repository evidence: {len(source_snapshot['files'])} selected files "
+            provenance["Evidence through"] = "Approved repository snapshot; capture time not recorded."
+            provenance["Repository evidence"] = (f"{len(source_snapshot['files'])} selected files "
                         f"({source_snapshot['bytesRead']:,} bytes); omissions: {source_summary}")
-        body = draft.removeprefix(SCHEMA_MARKER).lstrip()
-        markdown = f"{SCHEMA_MARKER}\n\n<!-- Generated by recall. Review before reuse. -->\n\n{provenance}\n> Updated: `{generated_at}`\n{evidence}\n\n{body}"
         references = []
         for session in sessions:
-            row = conn.execute("SELECT path FROM files WHERE session_id=? AND source=? ORDER BY present DESC,mtime DESC LIMIT 1",
-                               (session["session_id"], session["source"])).fetchone()
-            label = f"Source session {session['session_id']} ({session['source']})".replace("\n", "\\n").replace("[", "\\[").replace("]", "\\]")
-            references.append(f"- [{label}]({Path(row['path']).absolute().as_uri()})" if row else f"- {label}; transcript link unavailable, retained in the Recall index.")
+            references.append(_creation_session_reference(conn, session))
         if source_snapshot:
             for item in source_snapshot["files"]:
                 root = source_snapshot.get("root")
                 label = json.dumps(item["path"], ensure_ascii=False).replace("[", "\\[").replace("]", "\\]") + (" (excerpt truncated)" if item.get("truncated") else "")
                 references.append(f"- [{label}]({(Path(root) / item['path']).as_uri()})" if root else f"- Repository excerpt: `{label}`; original path unavailable.")
-        if references:
-            markdown = markdown.rstrip() + "\n\n### Selected evidence provenance\n" + "\n".join(references) + "\n"
-        _context_validation(markdown, require_structured=True)
+        markdown = add_creation_provenance(draft, provenance, references)
+        _context_validation(markdown, require_structured=True, require_current=True)
         if getattr(args, "draft_only", False):
             if getattr(args, "json", False):
                 payload = {"draft": markdown, "focus": focus, "focus_preset": focus_preset,
-                           "sessions": [s["session_id"] for s in sessions]}
+                           "sessions": [s["session_id"] for s in sessions], "editorial_notes": editorial_notes}
                 if source_snapshot is not None and getattr(args, "include_snapshot", False):
                     payload["source_snapshot"] = source_snapshot
                 print(json.dumps(payload))
             else:
                 sys.stdout.write(markdown)
             return None
-        _print_context_review_report(_context_validation(markdown, require_structured=True))
+        _print_context_review_report(_context_validation(markdown, require_structured=True, require_current=True))
+        _print_editorial_notes(editorial_notes)
         print(_color_context_diff(markdown))
         if args.yes:
             return _save_created_context(destination, markdown, original_destination, args.force)
@@ -1769,7 +1799,7 @@ def _context_create_evidence(conn, args) -> Path | None:
                 edited = _edit_proposed_context(markdown)
                 if edited is not None:
                     markdown = _validate_context_draft(args.name, edited)
-                    _print_context_review_report(_context_validation(markdown, require_structured=True))
+                    _print_context_review_report(_context_validation(markdown, require_structured=True, require_current=True))
                     print(_color_context_diff(markdown))
                     # Return to the same review loop; never regenerate implicitly.
 
@@ -1787,7 +1817,7 @@ def context_command(args, conn=None) -> int:
         path = _context_create(args.name, args.force) if args.blank else _context_create_evidence(conn, args)
         if path:
             print(f"created and verified {path}")
-    elif args.context_cmd == "validate":
+    elif args.context_cmd in ("validate", "editorial"):
         payload_path = Path(args.input_file)
         if payload_path.stat().st_size > MAX_CONTEXT_CHARS * 24 + 4096:
             raise ContextError("context validation payload is too large")
@@ -1797,9 +1827,18 @@ def context_command(args, conn=None) -> int:
             raise ContextError(f"invalid context validation payload: {error}") from None
         if not isinstance(payload, dict) or not isinstance(payload.get("text"), str) or (payload.get("original") is not None and not isinstance(payload["original"], str)):
             raise ContextError("validation requires text and optional original strings")
-        report = _context_validation(payload["text"], original=payload.get("original"),
-                                     require_structured=payload.get("require_structured") is True,
-                                     prepare=payload.get("prepare_update") is True)
+        if args.context_cmd == "editorial":
+            try:
+                report = (apply_editorial_response(payload["text"], payload["response"])
+                          if "response" in payload else {"prompt": editorial_prompt(
+                              payload["text"], payload.get("evidence", ""), payload.get("instruction", ""))})
+            except ValueError as error:
+                raise ContextError(str(error)) from None
+        else:
+            report = _context_validation(payload["text"], original=payload.get("original"),
+                                         require_structured=payload.get("require_structured") is True,
+                                         prepare=payload.get("prepare_update") is True,
+                                         require_current=payload.get("require_current") is True)
         print(json.dumps(report))
     elif args.context_cmd == "discover":
         _context_discover_command(conn, args)
@@ -2325,6 +2364,9 @@ def main(argv=None):
     pvalidate = csub.add_parser("validate", help="validate a context proposal locally as JSON")
     pvalidate.add_argument("--input-file", required=True, help="private JSON payload containing text and optional original")
 
+    peditorial = csub.add_parser("editorial", help="build an editorial prompt or validate a Summary revision locally as JSON")
+    peditorial.add_argument("--input-file", required=True, help="private JSON payload; no model call or context save")
+
     pdisc = csub.add_parser("discover", help="search indexed context sources as JSON")
     pdisc.add_argument("query")
     pdisc.add_argument("--offset", type=int, default=0)
@@ -2377,7 +2419,7 @@ def main(argv=None):
     # allow bare `recall "<query>"` → search and `recall context NAME` → show
     argv = sys.argv[1:] if argv is None else argv
     context_commands = {
-        "create", "discover", "validate", "source-info", "list", "show", "path", "edit", "update", "undo", "import", "export", "delete",
+        "create", "discover", "validate", "editorial", "source-info", "list", "show", "path", "edit", "update", "undo", "import", "export", "delete",
         "-h", "--help",
     }
     if len(argv) >= 2 and argv[0] == "context" and argv[1] not in context_commands:

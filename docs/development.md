@@ -80,11 +80,25 @@ The `recall.py` module and CLI remain the compatibility facade. The data lifecyc
 - `recall_core.indexing` owns the SQLite schema, FTS5 indexes, connections, and incremental persistence.
 - `recall_core.retrieval` owns query filters, fuzzy and regular-expression search, ranking, and match-preview formatting.
 - `recall_core.context_creation` is the canonical source-first creation engine: local session discovery/ranking, focus-aware structured generation, and bounded repository evidence collection.
-- `recall_core.context_policy` owns the versioned Markdown contract, section budgets, writing/update policy, and validation. New generation, CLI updates/edits/imports, and Pi saves use this policy. The Pi extension calls `context validate --input-file` with a private temporary JSON proposal; validation does not index, invoke a model, fetch links, or write contexts. Legacy documents are not converted in place.
+- `recall_core.context_policy` owns the versioned Markdown contract, section budgets, writing/update policy, and validation. New generation, CLI updates/edits/imports, and Pi saves use this policy. The Pi extension calls `context validate --input-file` with a private temporary JSON proposal; validation does not index, invoke a model, fetch links, or write contexts. New creation requires v2 (title/summary/actions first, compact evidence IDs, metadata footer). Updates preserve v1 and unmarked legacy layouts; no format is converted in place.
 
-The Pi extension uses the backend's JSON discovery/draft/validation protocols and adapts source selection, approvals, and review rendering. Tests exercise the shared validator through real Python subprocesses, including Pi creation/editor/update saves and legacy preservation.
+The [editorial module](../recall_core/context_editorial.py) builds the shared Summary-review prompt and validates the model’s JSON response. It permits Summary-only edits, preserves supporting material and provenance, and fails closed on unresolved conflicts or invalid responses. `context editorial --input-file` only builds prompts or applies/validates a supplied response: it performs no model call, indexing, link fetching, or context save. CLI and Pi orchestration supply the same model and evidence before human approval.
+
+The Pi extension uses the backend's JSON discovery/draft/validation/editorial protocols and adapts source selection, approvals, and review rendering. Its `tool_call` guard blocks direct built-in write/edit calls to managed context/history paths, including normalized paths and symlink aliases; reviewed internal filesystem operations do not use those tools. This is an accidental-write guard, not an operating-system sandbox. Tests exercise the shared validator through real Python subprocesses, including Pi creation/editor/update saves and legacy preservation. The [update-evidence tests](../extensions/recall/update-evidence.test.ts) exercise the production proposal pipeline from a vague instruction through session-evidence selection, patching, and editorial review without saving. Selection uses `buildSessionProjection()` so compaction and context edits are honored; raw history is never a fallback. Empty edit arrays have a different error from malformed patch responses, and neither triggers a blind retry.
 
 Semantic embedding and CLI/TUI orchestration currently remain in the facade. Keeping them there avoids changing optional-dependency loading and the public module surface while the core is separated into subsystems.
+
+### Editorial regression evaluation
+
+The [editorial tests](../tests/test_context_editorial.py) cover omitted impact, uncertainty, Summary-only mutation, failed reviews, and protocol behavior. Two opt-in live evaluations use fictional evidence and never save a context:
+
+```bash
+RECALL_EDITORIAL_MODEL=default python3 -m unittest -v tests.test_context_editorial.LiveEditorialRegressionTests
+# Or select the same explicit provider/model for both cases:
+RECALL_EDITORIAL_MODEL=provider/model python3 -m unittest -v tests.test_context_editorial.LiveEditorialRegressionTests
+```
+
+A live pass is evidence about those cases, not a general guarantee of good writing or factual correctness.
 
 ## Demo assets
 
