@@ -3,6 +3,12 @@ name: Publish npm package
 on:
   release:
     types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing release tag to publish or verify, for example v0.1.1
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       tag:
