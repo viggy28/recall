@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.1](https://github.com/viggy28/recall/compare/v0.5.0...v0.5.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* publish npm releases from release workflow ([8b1cde4](https://github.com/viggy28/recall/commit/8b1cde4412dd5485c892cff1faa80477b6d43d12))
+* publish npm releases from release workflow ([7a7e56f](https://github.com/viggy28/recall/commit/7a7e56f0a19d426e6bd86273429650a28048003d))
+
 ## [0.5.0](https://github.com/viggy28/recall/compare/v0.4.0...v0.5.0) (2026-11-06)
 
 
