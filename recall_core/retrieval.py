@@ -226,7 +226,7 @@ def search_fuzzy(conn, args):
             FROM messages_fts WHERE messages_fts MATCH ?
         ),
         matches AS MATERIALIZED (
-            SELECT m.session_id, m.source, m.path, m.project, m.ts, m.epoch,
+            SELECT m.id, m.session_id, m.source, m.path, m.project, m.ts, m.epoch,
                    m.type, m.nl_text, COALESCE(f.present,1) AS present,
                    ft_any.snip, ft_any.raw_score,
                    CASE WHEN c.rowid IS NULL THEN 0 ELSE 1 END AS same_message

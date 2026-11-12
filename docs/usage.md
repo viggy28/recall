@@ -68,6 +68,10 @@ recall search "retry backoff" --source opencode
 recall search "schema discussion" --source chatgpt
 ```
 
+In `recall tui`, type to search and use ↑/↓ to select a session. The detail pane defaults to a recognition card: a short matching excerpt, a request when it adds context, an excerpt of the latest reply, and up to three recorded references such as PRs. Cyan labels separate sections, yellow highlights mark query words, and metadata stays quiet. These are transcript excerpts, not generated summaries; long replies are not expanded by default.
+
+Press Ctrl+T for the longer conversation preview, then PgUp/PgDn to scroll (Fn+↑/↓ on a Mac); Ctrl+T returns to the card. Selecting another session returns to its card. Enter resumes, Tab changes search mode, and Esc quits. The pane caps text at 80 columns for readability and uses the existing index—no rebuild is needed.
+
 If you have not installed the package, replace `recall` with `python3 recall.py` in these commands.
 
 ## Optional local semantic search
