@@ -35,6 +35,7 @@ import time
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 # Importing readline enables normal shell-style editing for input(): arrows,
 # Ctrl-A/Ctrl-E, and word movement. It is optional on platforms without it.
@@ -428,13 +429,13 @@ def search_semantic(conn, args, k_rrf=60, warn=True):
             continue
         frag = _oneline(txts[i])
         out.append({
-            "session_id": sid, "source": m["source"], "path": m["path"],
+            "id": m["id"], "session_id": sid, "source": m["source"], "path": m["path"],
             "project": m["project"], "ts": m["ts"], "epoch": m["epoch"],
             "type": m["type"], "present": present.get(sid, 1),
             "score": -fused[sid],          # sort key for _build_results (lower=better)
             "sim": cos,                    # cosine of the best chunk — the shown metric
             "snip": (frag[:160] + "…") if len(frag) > 160 else frag,
-            "nl_text": None,
+            "detail_snip": txts[i], "nl_text": None,
         })
     return out
 
@@ -551,8 +552,8 @@ def _build_results(conn, rows, args):
         e = best.get(sid)
         if e is None:
             e = best[sid] = {"row": r, "score": r["score"], "hits": 0,
-                             "snip": r["snip"], "detail_snip": r["snip"],
-                             "nl_snip": False}
+                             "snip": r["snip"], "detail_snip": r.get("detail_snip", r["snip"]),
+                             "match_id": r.get("id"), "nl_snip": False}
         # Fuzzy search returns at most two representative rows per session and
         # carries the exact pre-grouping count. Regex still returns every hit.
         if "hit_count" in r:
@@ -565,6 +566,7 @@ def _build_results(conn, rows, args):
         if terms and not e["nl_snip"] and r.get("nl_text"):
             e["snip"] = _snippet_from(r["nl_text"], terms)
             e["detail_snip"] = _snippet_from(r["nl_text"], terms, width=360)
+            e["match_id"] = r.get("id")
             e["nl_snip"] = True
     sessions = sorted(best.values(), key=lambda e: e["score"])[: args.limit]
 
@@ -586,7 +588,7 @@ def _build_results(conn, rows, args):
             # Pi resumes by transcript path; Claude by session id
             "resume_arg": r["path"] if src == "pi" else sid,
             "snip": _oneline(e["snip"]),
-            "detail_snip": _oneline(e["detail_snip"]),
+            "detail_snip": _oneline(e["detail_snip"]), "match_id": e["match_id"],
             "title": _session_title(conn, sid),
         })
     return results, semantic
@@ -694,36 +696,43 @@ def _fmt_span(secs) -> str:
     return "<1m"
 
 
-def _session_detail(conn, sid):
-    """One session's recognition card for the TUI detail pane: start/last/span,
-    message count, first real prompt, and latest message. Cheap indexed lookups
-    (idx_msg_session/idx_msg_epoch), fetched lazily per selected row."""
+def _session_detail(conn, sid, source="claude-code", match_id=None):
+    """Fetch a selected match, its transcript neighbors, and the latest exchange.
+
+    Neighbors stay in the matched file: subagent transcripts must not be
+    presented as adjacent turns of their parent's conversation. Surrounding
+    context excludes tool-only messages and injected compaction/attachment text.
+    """
+    scope = (sid, source)
     agg = conn.execute(
         "SELECT MIN(epoch) AS first_ep, MAX(epoch) AS last_ep, COUNT(*) AS n "
-        "FROM messages WHERE session_id=? AND type IN ('user','assistant')",
-        (sid,)).fetchone()
-    first_prompt = ""
-    for r in conn.execute(
-            "SELECT text FROM messages WHERE session_id=? AND role='user' "
-            "AND type='user' AND text<>'' AND text NOT LIKE '<%' "
-            "ORDER BY epoch LIMIT 5", (sid,)).fetchall():
-        t = r[0].strip()
-        if t and not t.startswith(_COMPACTION_PREFIX):
-            first_prompt = _oneline(t)
-            break
-    # latest *conversational* line: prefer nl_text so a trailing code/tool dump
-    # doesn't fill the card with noise; fall back to raw text if none.
-    latest = conn.execute(
-        "SELECT nl_text FROM messages WHERE session_id=? AND nl_text IS NOT NULL "
-        "AND nl_text<>'' ORDER BY epoch DESC LIMIT 1", (sid,)).fetchone() or conn.execute(
-        "SELECT text FROM messages WHERE session_id=? AND type IN ('user','assistant') "
-        "AND text<>'' ORDER BY epoch DESC LIMIT 1", (sid,)).fetchone()
+        "FROM messages WHERE session_id=? AND source=? AND type IN ('user','assistant')",
+        scope).fetchone()
+    conversational = (
+        "session_id=? AND source=? AND role IN ('user','assistant') "
+        "AND type IN ('user','assistant') AND TRIM(COALESCE(nl_text,''))<>'' "
+        "AND LTRIM(nl_text) NOT LIKE '<%' AND LTRIM(nl_text) NOT LIKE ?")
+    params = (*scope, _COMPACTION_PREFIX + "%")
+
+    def one(where, values, order="epoch DESC, id DESC"):
+        row = conn.execute(
+            f"SELECT id,path,line_no,role,type,epoch,text,nl_text FROM messages "
+            f"WHERE {where} ORDER BY {order} LIMIT 1", values).fetchone()
+        return dict(row) if row else None
+
+    latest_user = one(conversational + " AND role='user'", params)
+    latest_assistant = one(conversational + " AND role='assistant'", params)
+    match = one("session_id=? AND source=? AND id=?", (*scope, match_id))
+    before = after = None
+    if match:
+        before = one(conversational + " AND path=? AND line_no<?",
+                     (*params, match["path"], match["line_no"]), "line_no DESC, id DESC")
+        after = one(conversational + " AND path=? AND line_no>?",
+                    (*params, match["path"], match["line_no"]), "line_no, id")
     return {
-        "first_ep": agg["first_ep"] if agg else None,
-        "last_ep": agg["last_ep"] if agg else None,
-        "count": (agg["n"] if agg else 0) or 0,
-        "first_prompt": first_prompt,
-        "latest": _oneline(latest[0]) if latest else "",
+        "first_ep": agg["first_ep"], "last_ep": agg["last_ep"], "count": agg["n"],
+        "before": before, "match": match, "after": after,
+        "latest_user": latest_user, "latest_assistant": latest_assistant,
     }
 
 
@@ -1957,8 +1966,307 @@ def _tui_rows_per_result(home: bool) -> int:
     return 2 if home else 3
 
 
+def _tui_wrap_lines(text: str, width: int, limit: int | None = None) -> list[str]:
+    """Wrap transcript text in terminal cells, preserving paragraphs and code."""
+    width = max(1, width)
+    text = re.sub(r"\033\[[0-?]*[ -/]*[@-~]", "", text).expandtabs(4)
+    text = "".join(c for c in text if c == "\n" or unicodedata.category(c) not in {"Cc", "Cs"})
+    lines = []
+    for paragraph in text.strip("\n").split("\n"):
+        while paragraph:
+            chunk = _tui_clip_cells(paragraph, width)
+            if chunk == paragraph:
+                break
+            if not chunk:  # A two-cell character in a one-cell viewport.
+                lines.append("…")
+                paragraph = paragraph[1:]
+                continue
+            space = chunk.rfind(" ")
+            if space > len(chunk) // 2:
+                lines.append(chunk[:space].rstrip())
+                paragraph = paragraph[space + 1:]
+            else:
+                lines.append(chunk)
+                paragraph = paragraph[len(chunk):]
+        lines.append(paragraph.rstrip())
+    if limit is not None and len(lines) > limit:
+        lines = lines[:limit]
+        lines[-1] = _tui_clip_cells(lines[-1], width - 1) + "…"
+    return lines
+
+
+def _tui_match_line(lines, passage, query, mode):
+    """Locate the selected search passage inside its full message for scrolling."""
+    plain = _oneline(passage.replace(HL[0], "").replace(HL[1], "")).strip("…")
+    joined = " ".join(_oneline(line) for line in lines)
+    pos = joined.lower().find(plain[:80].lower()) if plain else -1
+    if pos < 0 and mode == "regex":
+        try:
+            match = re.search(query, joined)
+            pos = match.start() if match else -1
+        except re.error:
+            pass
+    elif pos < 0 and mode != "semantic":
+        positions = [joined.lower().find(term) for term in _fts_terms(query)]
+        pos = min((p for p in positions if p >= 0), default=-1)
+    if pos < 0:
+        return 0
+    used = 0
+    for i, line in enumerate(lines):
+        used += len(_oneline(line)) + 1
+        if used > pos:
+            return i
+    return 0
+
+
+def _tui_message_content(row, query, mode, selected=False):
+    """Prefer prose, unless doing so would hide evidence inside a tool call."""
+    natural, raw = row.get("nl_text") or "", row["text"] or ""
+    tool_terms = []
+    use_raw = not natural
+    if selected and mode == "fuzzy":
+        tool_terms = [term for term in _fts_terms(query)
+                      if term in raw.lower() and term not in natural.lower()]
+        use_raw = use_raw or bool(tool_terms)
+    if selected and mode == "regex":
+        try:
+            use_raw = use_raw or (re.search(query, raw) is not None and re.search(query, natural) is None)
+        except re.error:
+            pass
+    return (raw if use_raw else natural), use_raw, tool_terms
+
+
+def _tui_card_text(text):
+    """Remove Markdown decoration, not facts, from a short recognition excerpt."""
+    text = re.sub(r"\[([^\]]+)\]\(https?://[^\s)]+\)", r"\1", text)
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)
+    text = text.replace("**", "").replace("__", "")
+    return text.replace("`", "")
+
+
+def _tui_card_references(texts, limit=3):
+    """Recognizable labels for recorded links; no fetching or inferred entities."""
+    links, seen, seen_labels = [], set(), set()
+    for text in texts:
+        for url in re.findall(r"https?://[^\s<>\"`]+", text):
+            url = url.rstrip(".,;:!?)]}")
+            try:
+                parts = urlsplit(url)
+                host, path = parts.hostname or "", unquote(parts.path).rstrip("/")
+            except ValueError:
+                continue
+            key = (host.lower(), path)
+            if key in seen or not host:
+                continue
+            seen.add(key)
+            pr = re.fullmatch(r"/([^/]+/[^/]+)/pull/(\d+)(?:/.*)?", path)
+            issue = re.search(r"/issue/([A-Za-z][A-Za-z0-9]*-\d+)", path)
+            if host == "github.com" and pr:
+                label = f"GitHub  {pr[1]} #{pr[2]}"
+                rank = 0
+            elif host == "linear.app" and issue:
+                label, rank = f"Linear  {issue[1]}", 0
+            else:
+                # Query strings can contain credentials and aren't recognition
+                # cues. The full original link remains in the transcript view.
+                label, rank = host + path, 1
+            if label not in seen_labels:
+                seen_labels.add(label)
+                links.append((rank, label))
+    return [label for _, label in sorted(links, key=lambda item: item[0])[:limit]]
+
+
+def _tui_recognition_rows(e, d, width, home, query, mode):
+    """A bounded recognition card, not a transcript or a generated summary."""
+    width = min(80, max(1, width))
+    header, body = [], []
+
+    def plain(rows, text, style="dim", limit=1):
+        rows.extend(("T", line, style) for line in _tui_wrap_lines(text, width, limit))
+
+    def excerpt(label, text, limit, *, matching=False):
+        if not text.strip():
+            return
+        plain(body, label, "match_label" if matching else "label")
+        # Regex evidence is literal; don't remove the syntax it may have matched.
+        clean = text if matching and mode == "regex" else _tui_card_text(text)
+        clean = clean.replace(HL[0], "").replace(HL[1], "")
+        highlight_mode = "fuzzy" if mode == "semantic" else mode
+        for line in _tui_wrap_lines(_oneline(clean), width, limit):
+            body.append(("H", _mark_preview_terms(line, query, highlight_mode) if not home else line, "text"))
+        body.append(("T", "", "dim"))
+
+    title = _tui_card_text(e["title"] or e["session_id"][:8])
+    title_lines = _tui_wrap_lines(title, width)
+    plain(header, title, "bold", 2)
+    if not home:
+        highlight_mode = "fuzzy" if mode == "semantic" else mode
+        header = [("H", _mark_preview_terms(line, query, highlight_mode), style)
+                  for _, line, style in header]
+    plain(header, f"{_src_label(e.get('source'))} · {_abbrev_home(e['project'])}", "source", 2)
+    plain(header, f"Last active {_fmt_ts(d['last_ep'])} · {d['count']:,} messages", limit=2)
+    header.append(("T", "", "dim"))
+
+    selected = d["match"] if not home else None
+    request = d["latest_user"] if home else None
+    reference_texts = []
+    shown_texts = {_oneline(_tui_card_text(e["title"] or ""))}
+    if not home:
+        text = e.get("detail_snip") or e["snip"]
+        role = {"user": "you", "assistant": "assistant", "tool": "tool"}.get(
+            selected["role"] if selected else "", "")
+        if selected:
+            raw, use_raw, tool_terms = _tui_message_content(selected, query, mode, selected=True)
+            reference_texts.append(raw)
+            shown_texts.add(_oneline(_tui_card_text(raw)))
+            if mode == "fuzzy":
+                text = _snippet_from(raw, tool_terms or _fts_terms(query), width=width * 5)
+            elif mode == "regex":
+                try:
+                    match = re.search(query, raw)
+                    if match:
+                        start = max(0, match.start() - 60)
+                        text = ("…" if start else "") + raw[start:]
+                except re.error:
+                    pass
+            if use_raw:
+                role = "tool content"
+            # Prefer the request next to an assistant match, not a later,
+            # unrelated request. Do not repeat a user match as another section.
+            if selected["role"] == "user":
+                request = None
+            elif d["before"] and d["before"]["role"] == "user":
+                request = d["before"]
+        clean_match = text.replace(HL[0], "").replace(HL[1], "")
+        clean_match = clean_match if mode == "regex" else _tui_card_text(clean_match)
+        if len(title_lines) <= 2 and _oneline(clean_match) == _oneline(title):
+            # The highlighted title already shows the whole match. A second
+            # copy underneath a section heading adds no recognition value.
+            plain(body, "MATCH · shown in title", "match_label")
+            body.append(("T", "", "dim"))
+        else:
+            excerpt("WHY THIS MATCHED" + (f" · {role}" if role else ""), text, 5, matching=True)
+        shown_texts.add(_oneline(_tui_card_text(clean_match)))
+
+    if request:
+        text = request.get("nl_text") or ""
+        reference_texts.append(text)
+        normalized = _oneline(_tui_card_text(text))
+        # A short first prompt is often also the title. Show it only once.
+        if normalized not in shown_texts or _tui_cell_width(normalized) > width * 2:
+            excerpt("REQUEST" if home or request == d["before"] else "LATEST REQUEST", text, 3)
+            shown_texts.add(normalized)
+
+    latest = d["latest_assistant"]
+    if latest:
+        text = latest.get("nl_text") or ""
+        reference_texts.append(text)
+        if latest["id"] != (selected or {}).get("id") and _oneline(_tui_card_text(text)) not in shown_texts:
+            # An excerpt of the opening paragraph, not a claimed outcome or
+            # summary of the session. Long explanations belong behind Ctrl+T.
+            opening = re.split(r"\n\s*\n", text.strip(), maxsplit=1)[0]
+            if opening.startswith("#") or opening.startswith("```"):
+                opening = text
+            excerpt("LATEST REPLY · excerpt", opening, 5)
+
+    references = _tui_card_references(reference_texts)
+    if references:
+        plain(body, "REFERENCES", "label")
+        for reference in references:
+            plain(body, reference, "link")
+        body.append(("T", "", "dim"))
+    if not body:
+        plain(body, "No conversation text indexed for this session.")
+    tag = _TAG.get(e["resume_status"])
+    if tag:
+        plain(body, tag[1], "warning", 2)
+    plain(body, f"Session {e['session_id']}", limit=2)
+    plain(body, "Ctrl+T full preview · Enter resume", "hint")
+    return header, body, 0
+
+
+def _tui_detail_rows(e, d, width, home, query, mode):
+    """Build a pinned identity header and a scrollable, literal conversation preview.
+
+    Styles are symbolic so presentation can be tested without a curses terminal.
+    Only the preceding turn is bounded; the match and later replies are readable
+    in full with PgUp/PgDn, rather than cut to a fixed four-line snippet.
+    """
+    header, body = [], []
+
+    def plain(rows, text, style="dim", limit=None):
+        rows.extend(("T", line, style) for line in _tui_wrap_lines(text, width, limit))
+
+    plain(header, e["title"] or e["session_id"][:8], "bold", 2)
+    span = _fmt_span((d["last_ep"] or 0) - (d["first_ep"] or 0))
+    plain(header, f"{_src_label(e.get('source'))} · {d['count']:,} messages · {span} span")
+    plain(header, f"Project  {_abbrev_home(e['project'])}", limit=2)
+    plain(header, f"{_fmt_ts(d['first_ep'])} → {_fmt_ts(d['last_ep'])}", limit=2)
+    header.append(("T", "", "dim"))
+    shown = set()
+    focus = 0
+
+    def message(row, label, preceding=False, selected=False):
+        nonlocal focus
+        if not row or row["id"] in shown:
+            return
+        shown.add(row["id"])
+        role = {"user": "User", "assistant": "Assistant", "tool": "Tool"}.get(row["role"], row["role"])
+        text, use_raw, tool_terms = _tui_message_content(row, query, mode, selected)
+        if use_raw:
+            role += " / tool or metadata" if row["role"] != "tool" else " output"
+        plain(body, f"{label} · {role} · {_fmt_ts(row['epoch'])}", "bold" if selected else "dim")
+        lines = _tui_wrap_lines(text, width)
+        if preceding and len(lines) > 5:
+            lines = ["…"] + lines[-5:]
+        if selected:
+            passage = "" if tool_terms else e.get("detail_snip") or e["snip"]
+            focus_query = " ".join(tool_terms) if tool_terms else query
+            focus = len(body) + _tui_match_line(lines, passage, focus_query, mode)
+        for line in lines:
+            # Meaning search can still highlight literal query words when they
+            # occur; synonym-only matches remain unmarked rather than invented.
+            highlight_mode = "fuzzy" if mode == "semantic" else mode
+            body.append(("H", _mark_preview_terms(line, query, highlight_mode) if not home else line, "text"))
+        body.append(("T", "", "dim"))
+
+    if home:
+        message(d["latest_user"], "Latest request")
+        message(d["latest_assistant"], "Latest assistant message")
+    else:
+        plain(body, "Conversation around match", "bold")
+        message(d["before"], "Before", preceding=True)
+        if d["match"]:
+            message(d["match"], "Match", selected=True)
+        else:
+            # Older/incomplete search rows can still offer their stored snippet.
+            body.extend(("H", line, "text") for line in _preview_lines(
+                e.get("detail_snip") or e["snip"], query, mode, width, 8))
+            body.append(("T", "", "dim"))
+        message(d["after"], "After")
+        message(d["latest_assistant"], "Latest assistant message")
+    if not shown and home:
+        plain(body, "No conversation text indexed for this session.")
+    plain(body, f"Session  {e['session_id']}")
+    tag = _TAG.get(e["resume_status"])
+    if tag:
+        plain(body, tag[1])
+    return header, body, focus
+
+
+def _tui_detail_viewport(header, body, height, offset):
+    """Keep identity visible, reserve a scroll indicator, and clamp after resize."""
+    header = header[:max(0, height - 3)]
+    page = max(1, height - len(header) - 1)
+    maximum = max(0, len(body) - page)
+    offset = max(0, min(offset, maximum))
+    indicator = (f"Lines {offset + 1}–{min(len(body), offset + page)}/{len(body)} · PgUp/PgDn scroll"
+                 if maximum else "")
+    return header, body[offset:offset + page], indicator, offset, maximum, page
+
+
 def tui(conn, args):
-    """Interactive picker: type to search, ↑/↓ to move, Enter to resume."""
+    """Interactive picker: type to search, ↑/↓ to move, PgUp/PgDn to read."""
     import curses
     from types import SimpleNamespace
 
@@ -1989,7 +2297,7 @@ def tui(conn, args):
         res, _ = _build_results(conn, [dict(r) for r in rows], a)
         return res
 
-    detail_cache = {}   # sid → _session_detail(...), filled lazily on selection
+    detail_cache = {}   # (source, sid, match id) → lazily fetched conversation
     ui = {}             # filled once curses is up: "hl" highlight attr
 
     def _emit_hl(scr, y, x, maxw, s, base, hl):
@@ -2030,59 +2338,49 @@ def tui(conn, args):
             vis += _tui_cell_width(chunk)
 
     def draw_detail(scr, e, x, y0, w, y_max, home, query, mode, dim, bold, hl):
-        """Recognition card for the selected session in the right-side pane."""
-        sid = e["session_id"]
-        d = detail_cache.get(sid)
+        """Recognition first; the longer conversation preview is opt-in."""
+        cache_key = (e.get("source"), e["session_id"], e.get("match_id"))
+        d = detail_cache.get(cache_key)
         if d is None:
-            d = detail_cache[sid] = _session_detail(conn, sid)
-        # rows: ("T", text, attr) plain | ("H", marked text, None) highlighted.
-        # Recognition starts with the match. Titles and prompts are supporting
-        # context and are deliberately bounded so they cannot consume the pane.
-        rows = []
-        for ln in _bounded_lines(e["title"] or sid[:8], w, 2):
-            rows.append(("T", ln, bold))
-        # The list uses a compact, unique-enough prefix; the detail pane shows
-        # the complete ID so a user looking for a known session can confirm it.
-        sub = f"{sid} · {_src_label(e.get('source'))} · {_abbrev_home(e['project'])}" \
-              f"{_TAG.get(e['resume_status'], ('', ''))[0]}"
-        if not home:
-            metric = f"{e['sim']:.2f} sim" if (mode == "semantic" and e.get("sim") is not None) \
-                else f"{e['hits']} hit{'s' if e['hits'] != 1 else ''}"
-            sub += f" · {metric}"
-        rows.append(("T", sub, dim))
-        rows.append(("T", "", dim))
-        if not home:
-            rows.append(("T", f'Best match for "{query.strip()}"', dim))
-            passage = e.get("detail_snip") or e["snip"]
-            for i, ln in enumerate(_preview_lines(passage, query, mode, max(1, w - 2), 4)):
-                rows.append(("H", ("> " if i == 0 else "  ") + ln, None))
-            rows.append(("T", "", dim))
-        span = _fmt_span((d["last_ep"] or 0) - (d["first_ep"] or 0))
-        rows.append(("T", f"Started  {_fmt_ts(d['first_ep'])}  ·  spans {span}", 0))
-        rows.append(("T", f"Last     {_fmt_ts(d['last_ep'])}  ·  {d['count']:,} messages", 0))
-        if d["first_prompt"]:
-            rows.append(("T", "", dim))
-            rows.append(("T", "First prompt", dim))
-            for i, ln in enumerate(_bounded_lines(d["first_prompt"], max(1, w - 2), 3)):
-                rows.append(("T", ("> " if i == 0 else "  ") + ln, 0))
-        if home and d["latest"]:
-            rows.append(("T", "", dim))
-            rows.append(("T", "Latest", dim))
-            for i, ln in enumerate(_bounded_lines(d["latest"], max(1, w - 2), 4)):
-                rows.append(("T", ("> " if i == 0 else "  ") + ln, 0))
-        y = y0
-        for kind, text, attr in rows:
+            d = detail_cache[cache_key] = _session_detail(
+                conn, e["session_id"], source=e.get("source"), match_id=e.get("match_id"))
+        selection_key = (*cache_key, home, query, mode)
+        if ui.get("detail_selection") != selection_key:
+            ui.update(detail_selection=selection_key, full_preview=False)
+        full = ui.get("full_preview", False)
+        builder = _tui_detail_rows if full else _tui_recognition_rows
+        header, body, focus = builder(e, d, min(w, 80), home, query, mode)
+        if full:
+            header.insert(0, ("T", "FULL PREVIEW · Ctrl+T back to session card", "label"))
+        height = y_max - y0
+        view_key = (*selection_key, full)
+        if ui.get("detail_key") != view_key:
+            ui["detail_key"] = view_key
+            page = max(1, height - len(header) - 1)
+            ui["detail_top"] = max(0, focus - page // 3) if focus >= page - 3 else 0
+        header, visible, indicator, offset, maximum, page = _tui_detail_viewport(
+            header, body, height, ui.get("detail_top", 0))
+        ui.update(detail_top=offset, detail_max=maximum, detail_page=max(1, page - 2))
+        rows = header + visible
+        if indicator:
+            rows += [("T", "", "dim")] * max(0, height - len(rows) - 1)
+            rows.append(("T", indicator, "dim"))
+        for y, (kind, text, style) in enumerate(rows, y0):
             if y >= y_max:
                 break
+            source_style = {"pi": "pi", "codex": "codex"}.get(e.get("source"), "claude")
+            attr = {"dim": dim, "bold": bold, "text": 0, "hint": dim,
+                    "label": ui.get("claude", 0) | bold, "match_label": hl,
+                    "source": ui.get(source_style, dim), "link": ui.get("claude", 0),
+                    "warning": ui.get("warn", 0) | bold}[style]
             if kind == "H":
-                _emit_hl(scr, y, x, w, text, dim, hl)
+                _emit_hl(scr, y, x, w, text, attr, hl)
             else:
                 clipped = _tui_clip_cells(text, w)
                 try:
                     scr.addnstr(y, x, clipped, len(clipped), attr)
                 except curses.error:
                     pass
-            y += 1
 
     def draw(scr, query, mode, results, sel, top, results_home, searching=False, msg=""):
         scr.erase()
@@ -2153,7 +2451,12 @@ def tui(conn, args):
         if side and results:
             draw_detail(scr, results[sel], dx, 2, dw, h - 1,
                         home, query, mode, dim, bold, hl)
-        help = " ↑/↓ move · Enter resume · Tab mode · ⌫ edit · Esc quit"
+        help = " ↑/↓ select"
+        if side:
+            help += " · Ctrl+T " + ("card" if ui.get("full_preview") else "preview")
+        help += " · Enter resume · Tab mode · Esc quit"
+        if side and ui.get("detail_max", 0):
+            help += " · PgUp/PgDn scroll"
         if mode == "semantic" and semantic_stale:
             help += " · semantic stale: recall index -s"
         scr.addnstr(h - 1, 0, help[:w - 1], w - 1, dim)
@@ -2220,6 +2523,13 @@ def tui(conn, args):
                 sel = max(0, sel - 1)
             elif ch == curses.KEY_DOWN:
                 sel = min(len(results) - 1, sel + 1) if results else 0
+            elif ch == "\x14":                    # Ctrl+T: card ↔ full preview
+                if scr.getmaxyx()[1] >= 90 and results:
+                    ui["full_preview"] = not ui.get("full_preview", False)
+            elif ch in (curses.KEY_PPAGE, curses.KEY_NPAGE):
+                if scr.getmaxyx()[1] >= 90 and results:
+                    step = ui.get("detail_page", 1) * (1 if ch == curses.KEY_NPAGE else -1)
+                    ui["detail_top"] = max(0, min(ui.get("detail_max", 0), ui.get("detail_top", 0) + step))
             elif ch in ("\n", "\r", curses.KEY_ENTER):
                 if results:
                     return results[sel]
