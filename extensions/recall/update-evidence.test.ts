@@ -5,7 +5,7 @@ import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   collectContextUpdateEvidence, CONTEXT_UPDATE_EVIDENCE_MAX_CHARS,
-  contextUpdatePrompt, prepareContextUpdate,
+  contextUpdatePrompt, prepareContextUpdate, unifiedContextDiff,
 } from "./index.ts";
 
 const instruction = "update the recall context with what you found here.";
@@ -132,6 +132,22 @@ test("selection is bounded and omits whole messages instead of truncating qualif
   assert.equal(window.omittedMessages, 14);
   assert.equal(window.messages[0]!.text, "Message 14");
   assert.equal(window.messages.at(-1)!.text, "Message 29");
+});
+
+test("structured diffs omit unchanged lines between an early edit and a final-line addition", () => {
+  const original = [
+    "<!-- recall-context: 2 -->", "# Project", "", "## Summary", "Old summary.", "",
+    "## Current understanding", "Unchanged finding one.", "Unchanged finding two.", "",
+    "### Context metadata", "- Status: unknown", "",
+  ].join("\n");
+  const updated = original.replace("Old summary.", "New summary.") + "- Updated: `2026-11-13T18:47:05Z`\n";
+
+  const diff = unifiedContextDiff("project", original, updated);
+
+  assert.match(diff, /- Old summary\.\n\+ New summary\./);
+  assert.match(diff, /\+ - Updated: `2026-11-13T18:47:05Z`/);
+  assert.doesNotMatch(diff, /Unchanged finding one|Unchanged finding two|- - Status|\+ - Status/);
+  assert.equal((diff.match(/^@@/gm) ?? []).length, 2);
 });
 
 const structured = `<!-- recall-context: 2 -->
