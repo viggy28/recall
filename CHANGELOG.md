@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.6.0](https://github.com/viggy28/recall/compare/v0.5.0...v0.6.0) (2026-11-14)
+
+
+### Features
+
+* make TUI session previews recognition-first ([9b8fd0d](https://github.com/viggy28/recall/commit/9b8fd0dc253033d122b6db56c228c11faccd95af))
+* make TUI session previews recognition-first ([5954c94](https://github.com/viggy28/recall/commit/5954c9454af8026b1f76b23c88b0191a27814ec3))
+
+
+### Bug Fixes
+
+* publish npm releases from release workflow ([8b1cde4](https://github.com/viggy28/recall/commit/8b1cde4412dd5485c892cff1faa80477b6d43d12))
+* publish npm releases from release workflow ([7a7e56f](https://github.com/viggy28/recall/commit/7a7e56f0a19d426e6bd86273429650a28048003d))
+* render focused context diff hunks ([cd1afc8](https://github.com/viggy28/recall/commit/cd1afc836abe2f435a56b21444edb9686130a92c))
+
 ## [0.5.0](https://github.com/viggy28/recall/compare/v0.4.0...v0.5.0) (2026-11-06)
 
 
