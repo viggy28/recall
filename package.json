@@ -42,6 +42,9 @@
       "./extensions/recall/index.ts"
     ]
   },
+  "dependencies": {
+    "diff": "8.0.4"
+  },
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-agent-core": "*",

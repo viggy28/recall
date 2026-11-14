@@ -17,6 +17,7 @@ import {
 import { Container, Key, matchesKey, type SelectItem, SelectList, Text, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { structuredPatch } from "diff";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const BACKEND = join(PACKAGE_ROOT, "recall.py");
@@ -731,31 +732,25 @@ function focusedContextDiff(name: string, edits: ContextEdit[]): string {
   return [`--- ${name} (current)`, `+++ ${name} (proposed)`, ...blocks].join("\n");
 }
 
-function unifiedContextDiff(name: string, original: string, updated: string): string {
-  const oldLines = contextLines(original);
-  const newLines = contextLines(updated);
-  let prefix = 0;
-  while (prefix < oldLines.length && prefix < newLines.length && oldLines[prefix] === newLines[prefix]) prefix++;
-  let suffix = 0;
-  while (
-    suffix < oldLines.length - prefix
-    && suffix < newLines.length - prefix
-    && oldLines[oldLines.length - 1 - suffix] === newLines[newLines.length - 1 - suffix]
-  ) suffix++;
-  const removed = oldLines.slice(prefix, oldLines.length - suffix);
-  const added = newLines.slice(prefix, newLines.length - suffix);
-  if (removed.length === 0 && added.length === 0) return "(no changes)";
-  const oldStart = prefix + 1;
-  const newStart = prefix + 1;
-  const oldRange = removed.length === 1 ? String(oldStart) : `${oldStart},${removed.length}`;
-  const newRange = added.length === 1 ? String(newStart) : `${newStart},${added.length}`;
-  return [
-    `--- ${name} (current)`,
-    `+++ ${name} (proposed)`,
-    `@@ -${oldRange} +${newRange} @@`,
-    ...formatDiffLines("-", removed),
-    ...formatDiffLines("+", added),
-  ].join("\n");
+function formatHunkRange(start: number, count: number): string {
+  return count === 1 ? String(start) : `${start},${count}`;
+}
+
+export function unifiedContextDiff(name: string, original: string, updated: string): string {
+  const patch = structuredPatch(
+    `${name} (current)`, `${name} (proposed)`, original, updated, "", "", { context: 0 },
+  );
+  if (patch.hunks.length === 0) return "(no changes)";
+  const lines = [`--- ${patch.oldFileName}`, `+++ ${patch.newFileName}`];
+  for (const hunk of patch.hunks) {
+    lines.push(
+      `@@ -${formatHunkRange(hunk.oldStart, hunk.oldLines)} +${formatHunkRange(hunk.newStart, hunk.newLines)} @@`,
+    );
+    lines.push(...hunk.lines.map((line) => line.startsWith("+") || line.startsWith("-")
+      ? `${line[0]} ${line.slice(1)}`
+      : line));
+  }
+  return lines.join("\n");
 }
 
 export const CONTEXT_UPDATE_EVIDENCE_MAX_CHARS = 24_000;
