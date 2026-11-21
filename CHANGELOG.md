@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/viggy28/recall/compare/v0.6.0...v0.6.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* update contexts from selected sessions ([f64d919](https://github.com/viggy28/recall/commit/f64d919fdf56db8e4cb8d7548f0c28c68db47b53))
+
 ## [0.6.0](https://github.com/viggy28/recall/compare/v0.5.0...v0.6.0) (2026-11-14)
 
 
