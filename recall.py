@@ -1818,6 +1818,38 @@ def _context_discover_command(conn, args) -> None:
     print(json.dumps(rows))
 
 
+def _context_update_evidence_command(conn, args) -> None:
+    """Synthesize approved indexed sessions into bounded, cited update evidence."""
+    if not args.yes:
+        raise ContextError("selected-session update evidence requires prior transmission approval")
+    try:
+        focus = normalize_focus(args.focus)
+    except ValueError as error:
+        raise ContextError(str(error)) from None
+    sessions, sections, compacted = _session_creation_evidence(conn, list(args.session or []))
+    chunks = _generation_chunks(sections)
+    evidence, editorial_notes = _generate_creation_draft(
+        "selected-session-update-evidence", focus, "custom", chunks, args.model,
+    )
+    generated_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    coverage = _iso_utc(max((session["last_epoch"] for session in sessions
+                             if session["last_epoch"] is not None), default=None))
+    evidence = add_creation_provenance(evidence, {
+        "Generated": f"`{generated_at}`",
+        "Updated": f"`{generated_at}`",
+        "Evidence through": f"`{coverage}`",
+        "Focus": f"{focus} (`custom`)",
+        "Source sessions": ", ".join(f"`{session['session_id']}`" for session in sessions),
+    }, [_creation_session_reference(conn, session) for session in sessions])
+    _context_validation(evidence, require_structured=True, require_current=True)
+    print(json.dumps({
+        "evidence": evidence,
+        "sessions": [session["session_id"] for session in sessions],
+        "compacted": compacted,
+        "editorial_notes": editorial_notes,
+    }))
+
+
 def context_command(args, conn=None) -> int:
     """Dispatch `recall context ...` operations."""
     if args.context_cmd == "create":
@@ -1851,6 +1883,8 @@ def context_command(args, conn=None) -> int:
         print(json.dumps(report))
     elif args.context_cmd == "discover":
         _context_discover_command(conn, args)
+    elif args.context_cmd == "update-evidence":
+        _context_update_evidence_command(conn, args)
     elif args.context_cmd == "source-info":
         lexical = lexical_source_path(args.path)
         print(json.dumps({"path": str(lexical), "disclosure": source_disclosure(lexical, args.model or "Pi's configured default model")}))
@@ -2682,6 +2716,12 @@ def main(argv=None):
     pdisc.add_argument("--offset", type=int, default=0)
     pdisc.add_argument("--limit", type=int, default=DISCOVERY_PAGE_SIZE)
 
+    pevidence = csub.add_parser("update-evidence", help=argparse.SUPPRESS)
+    pevidence.add_argument("--session", action="append", required=True, metavar="ID")
+    pevidence.add_argument("--focus", required=True)
+    pevidence.add_argument("--model")
+    pevidence.add_argument("--yes", action="store_true", help=argparse.SUPPRESS)
+
     psourceinfo = csub.add_parser("source-info", help="show lexical source disclosure as JSON")
     psourceinfo.add_argument("path")
     psourceinfo.add_argument("--model")
@@ -2729,7 +2769,7 @@ def main(argv=None):
     # allow bare `recall "<query>"` → search and `recall context NAME` → show
     argv = sys.argv[1:] if argv is None else argv
     context_commands = {
-        "create", "discover", "validate", "editorial", "source-info", "list", "show", "path", "edit", "update", "undo", "import", "export", "delete",
+        "create", "discover", "update-evidence", "validate", "editorial", "source-info", "list", "show", "path", "edit", "update", "undo", "import", "export", "delete",
         "-h", "--help",
     }
     if len(argv) >= 2 and argv[0] == "context" and argv[1] not in context_commands:
@@ -2748,7 +2788,7 @@ def main(argv=None):
     if args.cmd == "context":
         try:
             conn = None
-            if args.context_cmd in ("create", "discover") and not getattr(args, "blank", False):
+            if args.context_cmd in ("create", "discover", "update-evidence") and not getattr(args, "blank", False):
                 conn = connect()
                 init_db(conn)
             code = context_command(args, conn)

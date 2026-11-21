@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
-  collectContextUpdateEvidence, CONTEXT_UPDATE_EVIDENCE_MAX_CHARS,
-  contextUpdatePrompt, prepareContextUpdate, unifiedContextDiff,
+  assertSummaryMaxLines, collectContextUpdateEvidence, CONTEXT_UPDATE_EVIDENCE_MAX_CHARS,
+  contextUpdatePrompt, loadSelectedSessionUpdateEvidence, prepareContextUpdate, unifiedContextDiff,
 } from "./index.ts";
 
 const instruction = "update the recall context with what you found here.";
@@ -173,6 +173,72 @@ Not established. [E1]
 - Scope: Timeout experiments.
 - Status: unknown
 `;
+
+test("explicit indexed sessions are loaded through the bounded backend protocol", async () => {
+  const requested = ["01a17679-4787-7311-8d38-bec3832c452f", "01a1aa81-c176-7508-8737-8a3f39018d52"];
+  const synthesized = structured.replace("The timeout effect is unknown.", "Both selected sessions contain Fileman findings.");
+  let calls = 0;
+  const evidence = await loadSelectedSessionUpdateEvidence({
+    async exec(_binary: string, args: string[]) {
+      calls++;
+      assert.deepEqual(args.slice(1, 3), ["context", "update-evidence"]);
+      assert.deepEqual(args.flatMap((arg, index) => arg === "--session" ? [args[index + 1]] : []), requested);
+      assert.ok(args.includes("test-provider/test-model"));
+      return { code: 0, stdout: JSON.stringify({
+        evidence: synthesized, sessions: requested, compacted: 1, editorial_notes: [],
+      }), stderr: "" };
+    },
+  } as any, {
+    cwd: tmpdir(), model: { provider: "test-provider", id: "test-model" },
+  } as any, "fileman", "Update from both sessions.", requested);
+
+  assert.equal(calls, 1);
+  assert.deepEqual(evidence.selectedSessions, requested);
+  assert.equal(evidence.synthesizedContext, synthesized);
+  assert.deepEqual(evidence.messages, []);
+});
+
+test("selected-session evidence and a three-line Summary limit survive patch and editorial passes", async () => {
+  const original = structured.replace("The timeout effect is unknown.", "Old line one.\nOld line two.\nOld line three.\nOld line four.");
+  const selectedEvidence = {
+    sessionId: null, sourceUri: null, messages: [], omittedMessages: 0,
+    selectedSessions: ["session-one", "session-two"],
+    synthesizedContext: structured.replace("The timeout effect is unknown.", "Both sessions report the same qualified result."),
+  };
+  const { pi } = nativeBackend();
+  let calls = 0;
+  const proposal = await prepareContextUpdate(pi, { cwd: tmpdir() } as any, "fileman", original,
+    "Update from both sessions and compact the Summary.", async (prompt) => {
+      calls++;
+      assert.match(prompt, /at most 3 non-empty Markdown lines/);
+      assert.match(prompt, /session-one/);
+      assert.match(prompt, /Both sessions report the same qualified result/);
+      if (calls === 1) return JSON.stringify({ edits: [{
+        old_text: "Old line one.\nOld line two.\nOld line three.\nOld line four.",
+        new_text: "First current point.\nSecond current point.\nThird current point.",
+      }] });
+      return JSON.stringify({
+        summary: "First current point.\nSecond current point.\nThird current point.",
+        notes: [], blocked: false,
+      });
+    }, undefined, { evidence: selectedEvidence, summaryMaxLines: 3 });
+
+  assert.equal(calls, 2);
+  assert.doesNotThrow(() => assertSummaryMaxLines(proposal.updated, 3));
+  assert.match(proposal.reviewNotes[0]!, /2 approved indexed session/);
+});
+
+test("Summary line limits fail closed after editorial review", async () => {
+  const { pi } = nativeBackend();
+  let calls = 0;
+  await assert.rejects(prepareContextUpdate(pi, discussedContext(), "timeouts", structured,
+    "Keep the Summary to three lines.", async () => {
+      calls++;
+      if (calls === 1) return JSON.stringify({ edits: [{ old_text: "The timeout effect is unknown.", new_text: "One.\nTwo.\nThree." }] });
+      return JSON.stringify({ summary: "One.\nTwo.\nThree.\nFour.", notes: [], blocked: false });
+    }, undefined, { summaryMaxLines: 3 }), /Summary has 4 non-empty Markdown lines/);
+  assert.equal(calls, 2);
+});
 
 test("the editorial pass receives the same new session evidence, not just the stale original", async () => {
   const { pi, commands } = nativeBackend();
