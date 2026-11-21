@@ -160,7 +160,7 @@ async function runBackend(pi: ExtensionAPI, args: string[], signal?: AbortSignal
   const stderr = result.stderr.trim();
   if (result.code !== 0 || stderr.includes("semantic mode needs fastembed")) {
     const creationProtocol = args[0] === "context" && (
-      args[1] === "discover" || args[1] === "source-info" || args[1] === "validate" || args[1] === "editorial" ||
+      args[1] === "discover" || args[1] === "update-evidence" || args[1] === "source-info" || args[1] === "validate" || args[1] === "editorial" ||
       (args[1] === "create" && args.includes("--draft-only"))
     );
     if (creationProtocol && result.code === 2 && /error: (?:unrecognized arguments|argument \S+: invalid choice)/.test(stderr)) {
@@ -756,13 +756,43 @@ export function unifiedContextDiff(name: string, original: string, updated: stri
 export const CONTEXT_UPDATE_EVIDENCE_MAX_CHARS = 24_000;
 const CONTEXT_UPDATE_EVIDENCE_MAX_MESSAGES = 16;
 
-type ContextUpdateEvidence = {
+export type ContextUpdateEvidence = {
   sessionId: string | null;
   sourceUri: string | null;
   messages: { entryId: string; timestamp: string; role: string; text: string }[];
   omittedMessages: number;
+  selectedSessions?: string[];
+  synthesizedContext?: string;
   unavailable?: string;
 };
+
+type ContextUpdateOptions = {
+  evidence?: ContextUpdateEvidence;
+  summaryMaxLines?: number;
+};
+
+function summaryLines(text: string): string[] | null {
+  if (!hasContextSchema(text)) return null;
+  const lines = text.split("\n");
+  const start = lines.findIndex((line) => line === "## Summary");
+  if (start < 0) return null;
+  const endOffset = lines.slice(start + 1).findIndex((line) => line.startsWith("## "));
+  const end = endOffset < 0 ? lines.length : start + 1 + endOffset;
+  return lines.slice(start + 1, end).filter((line) => line.trim().length > 0);
+}
+
+export function assertSummaryMaxLines(text: string, maxLines?: number): void {
+  if (maxLines === undefined) return;
+  const lines = summaryLines(text);
+  if (lines === null) throw new Error("summary_max_lines requires a structured Recall context with a Summary section.");
+  if (lines.length > maxLines) {
+    throw new Error(`Summary has ${lines.length} non-empty Markdown lines; summary_max_lines requires at most ${maxLines}. No changes were saved.`);
+  }
+}
+
+function summaryLineRequirement(maxLines?: number): string {
+  return maxLines === undefined ? "" : `\nThe Summary must contain at most ${maxLines} non-empty Markdown lines. Keep each line concise; do not rely on terminal wrapping. This is a required output constraint, not permission to drop essential uncertainty or evidence.`;
+}
 
 export function collectContextUpdateEvidence(ctx: ExtensionContext): ContextUpdateEvidence {
   const manager = ctx.sessionManager;
@@ -807,8 +837,66 @@ export function collectContextUpdateEvidence(ctx: ExtensionContext): ContextUpda
   return evidence;
 }
 
+type BackendUpdateEvidence = {
+  evidence: string;
+  sessions: string[];
+  compacted: number;
+  editorial_notes: string[];
+};
+
+export async function loadSelectedSessionUpdateEvidence(
+  pi: ExtensionAPI, ctx: ExtensionContext, name: string, instruction: string,
+  sessionIds: string[], signal?: AbortSignal,
+): Promise<ContextUpdateEvidence> {
+  const focus = cleanLine(`Update ${name}: ${instruction}`, 240);
+  const args = ["context", "update-evidence", "--focus", focus, "--yes"];
+  for (const id of sessionIds) args.push("--session", id);
+  if (ctx.model) args.push("--model", `${ctx.model.provider}/${ctx.model.id}`);
+  const payload = JSON.parse(await runBackend(pi, args, signal, ctx.cwd)) as BackendUpdateEvidence;
+  if (!payload || typeof payload.evidence !== "string" || !payload.evidence.trim()
+      || !Array.isArray(payload.sessions) || payload.sessions.length === 0
+      || payload.sessions.some((id) => typeof id !== "string")
+      || !Array.isArray(payload.editorial_notes)) {
+    throw new Error("Recall's backend returned invalid selected-session update evidence. No context was saved.");
+  }
+  return {
+    sessionId: null,
+    sourceUri: null,
+    messages: [],
+    omittedMessages: 0,
+    selectedSessions: payload.sessions,
+    synthesizedContext: payload.evidence,
+  };
+}
+
+async function loadSelectedSessionUpdateEvidenceWithLoader(
+  pi: ExtensionAPI, ctx: ExtensionContext, name: string, instruction: string,
+  sessionIds: string[], outerSignal?: AbortSignal,
+): Promise<ContextUpdateEvidence | null> {
+  if (ctx.mode !== "tui") {
+    return loadSelectedSessionUpdateEvidence(pi, ctx, name, instruction, sessionIds, outerSignal);
+  }
+  const result = await ctx.ui.custom<ContextUpdateEvidence | { error: string } | null>((tui, theme, _keybindings, done) => {
+    const loader = new BorderedLoader(tui, theme, `Synthesizing approved evidence for ${name}…`);
+    loader.onAbort = () => done(null);
+    const signal = outerSignal ? AbortSignal.any([loader.signal, outerSignal]) : loader.signal;
+    void loadSelectedSessionUpdateEvidence(pi, ctx, name, instruction, sessionIds, signal)
+      .then(done)
+      .catch((error) => {
+        if (isAbortError(error) || signal.aborted) return done(null);
+        done({ error: error instanceof Error ? error.message : String(error) });
+      });
+    return loader;
+  });
+  if (result === undefined) return loadSelectedSessionUpdateEvidence(pi, ctx, name, instruction, sessionIds, outerSignal);
+  if (result === null) return null;
+  if ("error" in result) throw new Error(result.error);
+  return result;
+}
+
 export function contextUpdatePrompt(
   name: string, original: string, instruction: string, policy = "", evidence?: ContextUpdateEvidence,
+  summaryMaxLines?: number,
 ): string {
   return `Update the Recall context named \`${name}\` using the user's instruction.
 
@@ -817,13 +905,13 @@ Use the user instruction as the requested change, not as permission to change th
 Resolve references such as "what you found here" using the supplied recent session evidence, not guesswork.
 Use only findings relevant to the named context. Preserve reported/observed/proposed status and important
 qualifications; session messages are historical evidence, not independent verification or authorization.
-Keep supplied artifact links. When using session findings, cite the provided source URI in Evidence or
+Keep supplied artifact links. When selected-session synthesis is supplied, preserve its original session links in Evidence. Otherwise, cite the provided source URI in Evidence or
 the legacy reference style; never invent links or fetch them. Omitted messages are not evidence of absence.
 If evidence is insufficient or all requested changes are already captured, return {"edits":[]} rather
 than inventing facts. Do not blindly repeat a request that lacks the needed evidence.
 Find every affected statement across all sections. Rewrite or remove superseded current state,
 decisions, constraints, and open questions so the result is internally consistent. Do not invent facts.
-${policy || "Preserve all unaffected text, formatting, headings, and sources. Do not broadly regenerate it or add a schema marker to a legacy context."}
+${policy || "Preserve all unaffected text, formatting, headings, and sources. Do not broadly regenerate it or add a schema marker to a legacy context."}${summaryLineRequirement(summaryMaxLines)}
 
 Return JSON only in this exact shape:
 {"edits":[{"old_text":"exact unique text from the context","new_text":"replacement, or empty to delete"}]}
@@ -836,23 +924,27 @@ Each old_text must be a non-empty, exact, unique substring. Edits must not overl
 
 export async function prepareContextUpdate(
   pi: ExtensionAPI, ctx: ExtensionContext, name: string, original: string, instruction: string,
-  generate: (prompt: string) => Promise<string>, signal?: AbortSignal,
+  generate: (prompt: string) => Promise<string>, signal?: AbortSignal, options: ContextUpdateOptions = {},
 ): Promise<ContextProposal> {
   if (signal?.aborted) throw new DOMException("Context update aborted.", "AbortError");
-  const evidence = collectContextUpdateEvidence(ctx);
+  const evidence = options.evidence ?? collectContextUpdateEvidence(ctx);
   const contract = await contextPolicy(pi, ctx, original);
-  const response = await generate(contextUpdatePrompt(name, original, instruction, contract.update_policy, evidence));
+  const response = await generate(contextUpdatePrompt(name, original, instruction, contract.update_policy, evidence, options.summaryMaxLines));
   if (signal?.aborted) throw new DOMException("Context update aborted.", "AbortError");
   const edits = parseContextPatch(response);
   const candidate = await contextPolicy(pi, ctx, applyContextPatch(original, edits), original);
   // The editor must see the same new evidence as the patch model, not just the stale original file.
   const supportingEvidence = JSON.stringify({ original_context: original, session_evidence: evidence });
-  const reviewed = await reviewContextSummary(pi, ctx, candidate.text, supportingEvidence, instruction, generate, signal);
+  const editorialInstruction = instruction + summaryLineRequirement(options.summaryMaxLines);
+  const reviewed = await reviewContextSummary(pi, ctx, candidate.text, supportingEvidence, editorialInstruction, generate, signal);
+  assertSummaryMaxLines(reviewed.text, options.summaryMaxLines);
   const report = await contextPolicy(pi, ctx, reviewed.text, original, false, true);
   report.editorial_notes = reviewed.editorial_notes;
   const updated = report.text;
   const diff = report.schema_version === null ? focusedContextDiff(name, edits) : unifiedContextDiff(name, original, updated);
-  const evidenceNote = evidence.unavailable ?? `Update evidence: ${evidence.messages.length} recent session messages/summaries; ${evidence.omittedMessages} omitted by the bounded selection. Tools, thinking, and system/custom messages are excluded.`;
+  const evidenceNote = evidence.unavailable ?? (evidence.selectedSessions
+    ? `Update evidence: model-assisted synthesis of ${evidence.selectedSessions.length} approved indexed session(s): ${evidence.selectedSessions.join(", ")}.`
+    : `Update evidence: ${evidence.messages.length} recent session messages/summaries; ${evidence.omittedMessages} omitted by the bounded selection. Tools, thinking, and system/custom messages are excluded.`);
   return { updated, edits, diff, reviewNotes: [evidenceNote, ...contextReviewNotes(report)] };
 }
 
@@ -863,6 +955,7 @@ async function generateContextProposal(
   original: string,
   instruction: string,
   signal?: AbortSignal,
+  options: ContextUpdateOptions = {},
 ): Promise<ContextProposal> {
   if (!ctx.model) throw new Error("No model is selected in Pi.");
   if (signal?.aborted) throw new DOMException("Context update aborted.", "AbortError");
@@ -909,7 +1002,7 @@ async function generateContextProposal(
     }
     return text;
   };
-  return prepareContextUpdate(pi, ctx, name, original, instruction, generate, signal);
+  return prepareContextUpdate(pi, ctx, name, original, instruction, generate, signal, options);
 }
 
 async function proposeContextUpdate(
@@ -919,6 +1012,7 @@ async function proposeContextUpdate(
   original: string,
   instruction: string,
   outerSignal?: AbortSignal,
+  options: ContextUpdateOptions = {},
 ): Promise<ContextProposal> {
   // Generation must not depend on TUI custom(). custom() is a no-op in RPC/print and can
   // also be displaced when tools run in parallel. Only the optional progress loader uses it.
@@ -927,7 +1021,7 @@ async function proposeContextUpdate(
       const loader = new BorderedLoader(tui, theme, `Finding every affected statement in ${name}…`);
       loader.onAbort = () => done(null);
       const signal = outerSignal ? AbortSignal.any([loader.signal, outerSignal]) : loader.signal;
-      void generateContextProposal(pi, ctx, name, original, instruction, signal)
+      void generateContextProposal(pi, ctx, name, original, instruction, signal, options)
         .then((proposal) => done(proposal))
         .catch((error) => {
           if (error instanceof DOMException && error.name === "AbortError") return done(null);
@@ -940,13 +1034,13 @@ async function proposeContextUpdate(
     });
     // undefined => custom() unavailable (should not happen in tui); null => user aborted loader
     if (viaLoader === undefined) {
-      return generateContextProposal(pi, ctx, name, original, instruction, outerSignal);
+      return generateContextProposal(pi, ctx, name, original, instruction, outerSignal, options);
     }
     if (viaLoader === null) throw new DOMException("Context update aborted.", "AbortError");
     if ("error" in viaLoader) throw new Error(viaLoader.error);
     return viaLoader;
   }
-  return generateContextProposal(pi, ctx, name, original, instruction, outerSignal);
+  return generateContextProposal(pi, ctx, name, original, instruction, outerSignal, options);
 }
 
 async function reviewContextText(
@@ -1056,8 +1150,12 @@ async function reviewContextUpdate(pi: ExtensionAPI, ctx: ExtensionContext, name
   return reviewContextText(pi, ctx, `Update ${name}`, proposal.diff, false, proposal.reviewNotes, proposal.updated);
 }
 
-async function applyContextUpdate(pi: ExtensionAPI, ctx: ExtensionContext, name: string, original: string, updated: string): Promise<string> {
+async function applyContextUpdate(
+  pi: ExtensionAPI, ctx: ExtensionContext, name: string, original: string, updated: string,
+  summaryMaxLines?: number,
+): Promise<string> {
   if (updated === original) throw new Error("The proposed update made no changes.");
+  assertSummaryMaxLines(updated, summaryMaxLines);
   if (updated.length > 100_000) throw new Error("The updated context exceeds 100,000 characters.");
   await contextPolicy(pi, ctx, updated, original);
   const path = contextPath(name);
@@ -1090,6 +1188,8 @@ async function updateContextInteractively(
   name: string,
   initialInstruction?: string,
   signal?: AbortSignal,
+  sessionIds: string[] = [],
+  summaryMaxLines?: number,
 ): Promise<ContextWriteResult> {
   if (!ctx.hasUI) throw new Error("Updating a context requires Pi's interactive UI.");
   const path = contextPath(name);
@@ -1098,10 +1198,32 @@ async function updateContextInteractively(
   if (!instruction) instruction = (await ctx.ui.editor(`Describe what changed in ${name}`, ""))?.trim();
   if (!instruction) return { status: "cancelled" };
 
+  let selectedEvidence: ContextUpdateEvidence | undefined;
+  if (sessionIds.length > 0) {
+    const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "Pi's configured model";
+    const approved = await ctx.ui.confirm(
+      "Send selected transcript evidence?",
+      `Indexed sessions:\n${sessionIds.map((id) => `- ${id}`).join("\n")}\nUpdate: ${instruction}\nGeneration model: ${model}\n\nRecall will first synthesize bounded, cited evidence for the update. Saving requires a separate reviewed action.`,
+    );
+    if (!approved || signal?.aborted) return { status: "cancelled" };
+    try {
+      selectedEvidence = await loadSelectedSessionUpdateEvidenceWithLoader(
+        pi, ctx, name, instruction, sessionIds, signal,
+      ) ?? undefined;
+    } catch (error) {
+      if (isAbortError(error) || signal?.aborted) return { status: "aborted" };
+      return { status: "failed", error: error instanceof Error ? error.message : String(error) };
+    }
+    if (!selectedEvidence) return { status: signal?.aborted ? "aborted" : "cancelled" };
+  }
+
   while (true) {
     let proposal: ContextProposal;
     try {
-      proposal = await proposeContextUpdate(pi, ctx, name, original, instruction, signal);
+      proposal = await proposeContextUpdate(pi, ctx, name, original, instruction, signal, {
+        evidence: selectedEvidence,
+        summaryMaxLines,
+      });
     } catch (error) {
       if (isAbortError(error) || signal?.aborted) return { status: "aborted" };
       const message = error instanceof Error ? error.message : String(error);
@@ -1123,6 +1245,7 @@ async function updateContextInteractively(
         if (edited === undefined) continue;
         try {
           const report = await contextPolicy(pi, ctx, edited, original, false, true);
+          assertSummaryMaxLines(report.text, summaryMaxLines);
           proposal = {
             updated: report.text,
             edits: [],
@@ -1134,7 +1257,7 @@ async function updateContextInteractively(
         }
         continue; // Re-review the edited document, counts and warnings; never save from the editor alone.
       }
-      const savedPath = await applyContextUpdate(pi, ctx, name, original, proposal.updated);
+      const savedPath = await applyContextUpdate(pi, ctx, name, original, proposal.updated, summaryMaxLines);
       ctx.ui.notify(`Updated and verified ${savedPath}. Previous revision retained; use Undo last update in /recall.`, "info");
       return { status: "updated", path: savedPath };
     }
@@ -1807,13 +1930,14 @@ export default function recallExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "recall_context",
     label: "Recall Context",
-    description: "List, show, attach, create from specified sessions or selected evidence, or update a Recall context. Creation requires evidence approval and draft review; it discovers sessions only when no source is specified.",
+    description: "List, show, attach, create from specified sessions or selected evidence, or update a Recall context from current or explicitly selected sessions. Source-backed writes require evidence approval and review.",
     promptSnippet: "Create, manage, and update reusable local context banks",
     promptGuidelines: [
       "Use recall_context with action create when the user asks to create a context. Pass instruction only when the user supplied a custom focus/theme; otherwise Recall offers opinionated Durable project, Current task, Decision history, and Custom focuses. Discover indexed sessions only when the user has not specified a source.",
-      "For create from a specified session, put the exact user-supplied session ID(s) in session_ids, not instruction. For create from 'this session' or 'our current discussion', set current_session: true. These sources skip session discovery but still require evidence approval and draft review. Never infer a session ID from the topic or context name.",
+      "For create or update from specified sessions, put the exact user-supplied session ID(s) in session_ids, not instruction. For create from 'this session' or 'our current discussion', set current_session: true. Explicit sources skip discovery but still require evidence approval and reviewed changes. Never infer a session ID from the topic or context name.",
       "When the user explicitly asks to create a context from source and supplies a repository path, pass that exact path as source_path. For example, `create recall context for safe-notsafe from the source.\\n~/source/github/viggy28/safe-not-safe` uses source_path `~/source/github/viggy28/safe-not-safe`. Never infer a path with regex or substitute the current working directory.",
-      "Use recall_context with action update when the user naturally asks to update, revise, correct, or refresh an existing Recall context; pass the user's exact update as instruction. Recall supplies a bounded selection of recent visible messages from the active session branch to resolve references such as 'what you found here'. If the needed findings are older or omitted, include the concrete facts and source links rather than repeating a vague request.",
+      "Use recall_context with action update when the user naturally asks to update, revise, correct, or refresh an existing Recall context; pass the user's exact update as instruction. When the user supplies source session IDs, pass them in session_ids so Recall can synthesize approved indexed evidence. Without session_ids, Recall uses a bounded selection of recent visible messages from the active session branch.",
+      "When the user explicitly limits the updated Summary to a number of lines, pass that number as summary_max_lines. This counts non-empty Markdown source lines; terminal wrapping varies by display width.",
       "Recall owns the structured document format, validation, and reviewed save. If creation or update fails, report the failure; never use file or shell writes to bypass Recall. Existing contexts are not automatically reformatted or migrated in place.",
     ],
     parameters: Type.Object({
@@ -1821,14 +1945,19 @@ export default function recallExtension(pi: ExtensionAPI) {
       name: Type.Optional(Type.String({ description: "Context name; required except for list" })),
       instruction: Type.Optional(Type.String({ description: "For create: optional focus/theme (at most 240 characters), never evidence or source selection. For update: the exact requested change." })),
       source_path: Type.Optional(Type.String({ description: "Exact repository directory supplied by the user for source-aware create only; never infer it or default to cwd" })),
-      session_ids: Type.Optional(Type.Array(Type.String({ minLength: 4 }), { minItems: 1, description: "For create only: exact session IDs or unique prefixes supplied by the user. Skips discovery; cannot combine with source_path or current_session." })),
+      session_ids: Type.Optional(Type.Array(Type.String({ minLength: 4 }), { minItems: 1, description: "For create or update: exact user-supplied session IDs or unique prefixes. Skips discovery; cannot combine with source_path or current_session." })),
       current_session: Type.Optional(Type.Boolean({ description: "For create only: use the active Pi session when the user says 'this session'. Skips discovery; cannot combine with source_path or session_ids." })),
+      summary_max_lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "For update only: explicit user-requested maximum non-empty Markdown lines in the Summary section." })),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (params.source_path !== undefined && params.action !== "create") throw new Error("source_path is supported only for create");
       if (params.source_path !== undefined && !params.source_path.trim()) throw new Error("source_path must not be empty");
-      if (params.session_ids !== undefined && params.action !== "create") throw new Error("session_ids is supported only for create");
+      if (params.session_ids !== undefined && params.action !== "create" && params.action !== "update") throw new Error("session_ids is supported only for create or update");
       if (params.current_session !== undefined && params.action !== "create") throw new Error("current_session is supported only for create");
+      if (params.summary_max_lines !== undefined && params.action !== "update") throw new Error("summary_max_lines is supported only for update");
+      if (params.summary_max_lines !== undefined && (!Number.isInteger(params.summary_max_lines) || params.summary_max_lines < 1 || params.summary_max_lines > 20)) {
+        throw new Error("summary_max_lines must be an integer from 1 to 20");
+      }
       if (params.session_ids !== undefined && (params.session_ids.length === 0 || params.session_ids.some((id) => id.trim().length < 4))) {
         throw new Error("session_ids must contain at least one session ID or unique prefix of at least 4 characters");
       }
@@ -1857,7 +1986,10 @@ export default function recallExtension(pi: ExtensionAPI) {
       const resolvedName = await resolveExistingContextName(params.name);
       if (params.action === "update") {
         if (!params.instruction?.trim()) throw new Error("update requires the user's exact instruction");
-        const result = await updateContextInteractively(pi, ctx, resolvedName, params.instruction, signal);
+        const result = await updateContextInteractively(
+          pi, ctx, resolvedName, params.instruction, signal,
+          params.session_ids?.map((id) => id.trim()), params.summary_max_lines,
+        );
         const text = result.status === "updated"
           ? `Updated and verified ${result.path}. Previous revision retained; use Undo last update in /recall.`
           : result.status === "proposed"

@@ -196,6 +196,92 @@ for (const scenario of ["valid", "v2", "invalid", "legacy", "concurrent"] as con
   });
 }
 
+test("denying update session evidence leaves the context untouched", async (t) => {
+  const { name, path, backup } = await testPaths(t, "deny-selected-sessions");
+  await writeFile(path, readableFixture);
+  let tool: any;
+  recallExtension({
+    on() {}, registerCommand() {}, events: { emit() {} },
+    registerTool(candidate: any) { if (candidate.name === "recall_context") tool = candidate; },
+    async exec() { throw new Error("Backend must not run before evidence approval"); },
+  } as any);
+
+  const result = await tool.execute("call", {
+    action: "update", name, instruction: "Update from the selected session.",
+    session_ids: ["01a17679-4787-7311-8d38-bec3832c452f"],
+  }, undefined, undefined, {
+    hasUI: true, mode: "tui", cwd: tmpdir(), model: { provider: "test", id: "model" },
+    ui: {
+      async confirm() { return false; },
+      async custom() { throw new Error("No generation or review UI should open"); },
+    },
+  });
+
+  assert.equal(result.details.status, "cancelled");
+  assert.equal(await readFile(path, "utf8"), readableFixture);
+  await assert.rejects(readFile(backup), { code: "ENOENT" });
+});
+
+test("Pi update accepts two approved session sources and enforces a three-line Summary", async (t) => {
+  initTheme(undefined, false);
+  const { name, path, backup } = await testPaths(t, "selected-sessions");
+  await writeFile(path, readableFixture);
+  const sessions = ["01a17679-4787-7311-8d38-bec3832c452f", "01a1aa81-c176-7508-8737-8a3f39018d52"];
+  const synthesized = readableFixture.replace("The cause is unknown.", "Both selected sessions contain qualified Fileman findings.");
+  const updated = readableFixture.replace("The cause is unknown.", "Fileman remains a working alpha.\nVault behavior is not established.\nCloud requests remain unverified.");
+  let tool: any;
+  let evidenceCalls = 0;
+  recallExtension({
+    on() {}, registerCommand() {}, events: { emit() {} },
+    registerTool(candidate: any) { if (candidate.name === "recall_context") tool = candidate; },
+    async exec(binary: string, args: string[], options: any) {
+      if (args[1] === "context" && args[2] === "validate") {
+        const result = spawnSync(binary, args, { cwd: options.cwd, encoding: "utf8", timeout: 10_000 });
+        return { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" };
+      }
+      assert.equal(args[2], "update-evidence");
+      evidenceCalls++;
+      assert.deepEqual(args.flatMap((arg: string, index: number) => arg === "--session" ? [args[index + 1]] : []), sessions);
+      return { code: 0, stdout: JSON.stringify({ evidence: synthesized, sessions, compacted: 0, editorial_notes: [] }), stderr: "" };
+    },
+  } as any);
+  let screen = 0;
+  let approvals = 0;
+  let loader: any;
+  t.after(() => loader?.dispose?.());
+
+  const result = await tool.execute("call", {
+    action: "update", name, instruction: "Update from both sessions and compact the Summary.",
+    session_ids: sessions, summary_max_lines: 3,
+  }, undefined, undefined, {
+    hasUI: true, mode: "tui", cwd: tmpdir(), model: { provider: "test", id: "model" },
+    ui: {
+      async confirm(title: string, detail: string) {
+        approvals++;
+        assert.equal(title, "Send selected transcript evidence?");
+        for (const session of sessions) assert.ok(detail.includes(session));
+        return true;
+      },
+      async custom(factory: any) {
+        screen++;
+        if (screen === 1) return new Promise((resolve) => {
+          loader = factory({ requestRender() {} }, theme, {}, resolve);
+        });
+        if (screen === 2) return { updated, edits: [], diff: "@@ selected sessions and compact Summary @@", reviewNotes: [] };
+        return "apply";
+      },
+      notify() {},
+    },
+  });
+
+  assert.equal(result.details.status, "updated");
+  assert.equal(evidenceCalls, 1);
+  assert.equal(approvals, 1);
+  assert.equal(screen, 3, "evidence synthesis, proposal generation, then save review");
+  assert.equal(await readFile(path, "utf8"), updated);
+  assert.equal(await readFile(backup, "utf8"), readableFixture);
+});
+
 test("Pi update re-reviews editor-introduced scope changes and warnings before saving", async (t) => {
   initTheme(undefined, false);
   const { name, path } = await testPaths(t, "editor");

@@ -50,8 +50,10 @@ test("registers source-first creation guidance and removes save_current", () => 
   assert.equal(contextTool.parameters.required.includes("source_path"), false);
   assert.ok(contextTool.parameters.properties.session_ids);
   assert.ok(contextTool.parameters.properties.current_session);
+  assert.ok(contextTool.parameters.properties.summary_max_lines);
   assert.equal(contextTool.promptGuidelines.some((line: string) => line.includes("focus/theme") && line.includes("Discover indexed sessions only")), true);
   assert.equal(contextTool.promptGuidelines.some((line: string) => line.includes("session_ids") && line.includes("current_session: true")), true);
+  assert.equal(contextTool.promptGuidelines.some((line: string) => line.includes("summary_max_lines")), true);
   assert.equal(contextTool.parameters.properties.instruction.description.includes("never evidence"), true);
   assert.equal(JSON.stringify(contextTool.parameters.properties.action).includes("save_current"), false);
 });
@@ -290,9 +292,9 @@ test("rejects conflicting or invalid session sources before opening the UI", asy
   for (const params of invalid) {
     await assert.rejects(tool.execute("call", { action: "create", name: "reader-restart", ...params }, undefined, undefined, {}));
   }
-  for (const params of [{ session_ids: ["valid-session"] }, { current_session: true }]) {
-    await assert.rejects(tool.execute("call", { action: "show", name: "reader-restart", ...params }, undefined, undefined, {}), /only for create/);
-  }
+  await assert.rejects(tool.execute("call", { action: "show", name: "reader-restart", session_ids: ["valid-session"] }, undefined, undefined, {}), /only for create or update/);
+  await assert.rejects(tool.execute("call", { action: "show", name: "reader-restart", current_session: true }, undefined, undefined, {}), /only for create/);
+  await assert.rejects(tool.execute("call", { action: "create", name: "reader-restart", summary_max_lines: 3 }, undefined, undefined, {}), /only for update/);
 });
 
 test("context generation shows cancellable progress after approval", async (t) => {

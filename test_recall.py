@@ -502,6 +502,51 @@ class ContextBankTests(unittest.TestCase):
         with self.assertRaisesRegex(recall.ContextError, "already exists"):
             recall._context_create("events-db")
 
+    def test_update_evidence_requires_prior_transmission_approval(self):
+        args = SimpleNamespace(session=["session-one"], focus="Fileman", model=None, yes=False)
+        with self.assertRaisesRegex(recall.ContextError, "prior transmission approval"):
+            recall._context_update_evidence_command(None, args)
+
+    def test_update_evidence_synthesizes_every_requested_session_without_saving(self):
+        conn = sqlite3.connect(":memory:")
+        conn.row_factory = sqlite3.Row
+        recall.init_db(conn)
+        self.addCleanup(conn.close)
+        for number, session_id in enumerate(("session-one", "session-two"), 1):
+            path = f"/tmp/{session_id}.jsonl"
+            finding = f"Qualified finding from source {number}."
+            conn.execute(
+                "INSERT INTO messages(path,session_id,source,project,role,type,ts,epoch,line_no,text,nl_text) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (path, session_id, "pi", "/tmp/fileman", "user", "user",
+                 f"2026-01-0{number}T00:00:00Z", number, 1, finding, finding),
+            )
+            conn.execute(
+                "INSERT INTO files(path,session_id,source,project,size,mtime,byte_offset,lines,present,last_indexed) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (path, session_id, "pi", "/tmp/fileman", 1, number, 1, 1, 1, number),
+            )
+        conn.commit()
+        args = SimpleNamespace(
+            session=["session-one", "session-two"],
+            focus="Update Fileman with both sessions", model="test/model", yes=True,
+        )
+        draft = structured_fixture("selected-session-update-evidence", "Both source sessions were synthesized.")
+        output = io.StringIO()
+
+        with mock.patch.object(recall, "_generate_creation_draft", return_value=(draft, ["Reviewed."])) as generate, redirect_stdout(output):
+            recall._context_update_evidence_command(conn, args)
+
+        payload = json.loads(output.getvalue())
+        self.assertEqual(payload["sessions"], ["session-one", "session-two"])
+        self.assertEqual(payload["editorial_notes"], ["Reviewed."])
+        self.assertIn("`session-one`, `session-two`", payload["evidence"])
+        self.assertIn("file:///tmp/session-one.jsonl", payload["evidence"])
+        chunks = generate.call_args.args[3]
+        self.assertTrue(any("Qualified finding from source 1" in chunk for chunk in chunks))
+        self.assertTrue(any("Qualified finding from source 2" in chunk for chunk in chunks))
+        self.assertFalse(recall.CONTEXTS_DIR.exists(), "evidence synthesis must not create or overwrite a context")
+
     def test_context_name_rejects_paths_and_invalid_names(self):
         for name in ("../events", "Events", "events_db", "-events", "events-", "a" * 65):
             with self.subTest(name=name), self.assertRaises(recall.ContextError):
